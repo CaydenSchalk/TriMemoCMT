@@ -1,5 +1,6 @@
 from configs.base import Config as BaseConfig
-
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class Config(BaseConfig):
     # Base
@@ -15,7 +16,7 @@ class Config(BaseConfig):
 
         self.loss_type = "CrossEntropyLoss"
 
-        self.checkpoint_dir = "working/checkpoints/IEMOCAP"
+        self.checkpoint_dir = str(PROJECT_ROOT / "checkpoints"/ "MELD")
 
         self.model_type = "TriMemoCMT"
 
@@ -31,7 +32,7 @@ class Config(BaseConfig):
 
         # Dataset
         self.data_name: str = "MELD"
-        self.data_root: str = "MELD_preprocessed"
+        self.data_root = str(PROJECT_ROOT / "data" / "MELD_preprocessed")
         self.data_valid: str = "val.pkl"
         self.text_max_length: int = 297
         self.audio_max_length: int = 128000  # 160220

@@ -2,7 +2,8 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from typing import List, Union
-
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class Base(ABC):
     def __init__(self, **kwargs):
@@ -133,10 +134,10 @@ class Config(BaseConfig):
 
         # Dataset
         self.data_name: str = (
-            "IEMOCAP"  # [IEMOCAP, ESD, MELD, IEMOCAPAudio, IEMOCAP_MSER]
+            "MELD"  # [IEMOCAP, ESD, MELD, IEMOCAPAudio, IEMOCAP_MSER]
         )
         self.data_root: str = (
-            "data/IEMOCAP_preprocessed"  # folder contains train.pkl and test.pkl
+            str(PROJECT_ROOT / "data" / "MELD_preprocessed") # folder contains train.pkl and test.pkl
         )
         self.data_valid: str = (
             "val.pkl"  # change this to your validation subset name if you want to use validation dataset. If None, test.pkl will be use
