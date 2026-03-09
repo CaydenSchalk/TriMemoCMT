@@ -106,21 +106,37 @@ class BaseDataset(Dataset):
 
         return input_text, input_audio, label
 
-    def __paudio__(self, file_path: int) -> torch.Tensor:
-        samples, sr = sf.read(file_path, dtype="int16")
-        if (
-            self.audio_max_length is not None
-            and samples.shape[0] < self.audio_max_length
-        ):
-            samples = np.pad(
-                samples, (0, self.audio_max_length - samples.shape[0]), "constant"
-            )
-        elif self.audio_max_length is not None:
-            samples = samples[: self.audio_max_length]
+    def __paudio__(self, file_path: str) -> torch.Tensor:
+        samples, sr = sf.read(file_path, dtype="float32")
 
-        samples = torchaudio.functional.resample(samples, sr, 16000)
+        # collapse to mono channel, take the average across the channel axis
+        if samples.ndim > 1:
+            samples = samples.mean(axis=1)
 
-        return torch.from_numpy(samples.astype(np.float32))
+        # since time is now the dimension, check if the shape is 0, we can see if it's empty
+        if samples.shape[0] == 0:
+            raise ValueError(f"Empty audio file: {file_path}")
+
+        x = torch.from_numpy(samples)
+
+        # resample to 16kHz, expected by hubert
+        if sr != 16000:
+            x = torchaudio.functional.resample(x, sr, 16000)
+
+        # enforce minimum length of 400, hubert needs this for the front-end conv layers
+        min_len = 400
+        if x.numel() < min_len:
+            x = torch.nn.functional.pad(x, (0, min_len - x.numel()))
+
+        # ensure it stays within max length
+        if self.audio_max_length is not None:
+            if x.numel() < self.audio_max_length:
+                x = torch.nn.functional.pad(x, (0, self.audio_max_length - x.numel()))
+            else:
+                x = x[: self.audio_max_length]
+
+        # just return as a float
+        return x.float()
 
     def _text_preprocessing(self, text):
         """
@@ -172,6 +188,7 @@ def build_train_test_dataset(cfg: Config, encoder_model: Union[TriMemoCMT, None]
     DATASET_MAP = {
         "IEMOCAP": BaseDataset,
         "ESD": BaseDataset,
+        "MELD" : BaseDataset,
     }
 
     dataset = DATASET_MAP.get(cfg.data_name, None)
