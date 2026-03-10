@@ -40,16 +40,16 @@ class MultimodalFusion(nn.Module):
         video = self.video_proj(video)
 
         # text attends to audio and video
-        text_audio, _ = self.text_cross(audio, text)
-        text_video, _ = self.text_cross(video, text)
+        text_audio, _ = self.text_cross(text, audio)
+        text_video, _ = self.text_cross(text, video)
 
         # audio attends to text and video
-        audio_text, _ = self.audio_cross(text, audio)
-        audio_video, _ = self.audio_cross(video, audio)
+        audio_text, _ = self.audio_cross(audio, text)
+        audio_video, _ = self.audio_cross(audio, video)
 
         # video attends to audio and text
-        video_audio, _ = self.video_cross(audio, video)
-        video_text, _ = self.video_cross(text, video)
+        video_audio, _ = self.video_cross(video, audio)
+        video_text, _ = self.video_cross(video, text)
 
         return text_audio, text_video, audio_text, audio_video, video_audio, video_text
 
@@ -78,11 +78,23 @@ class TriMemoCMT(nn.Module):
 
         # Video module
         self.video_encoder = build_video_encoder(cfg)
+
+        # for name, _ in self.video_encoder.named_modules():
+        #     print(name)
+
         self.video_encoder.to(device)
 
         # Freeze/Unfreeze the video module
         for param in self.video_encoder.parameters():
-            param.requires_grad = cfg.video_unfreeze
+            param.requires_grad = False
+
+        if cfg.video_unfreeze:
+            for block in self.video_encoder.model.model.blocks[-cfg.video_unfreeze_amount:]:
+                for p in block.parameters():
+                    p.requires_grad = True
+
+        # for name, param in self.video_encoder.named_parameters():
+        #     print(name, param.shape)
 
         # Fusion module
         self.dropout = nn.Dropout(cfg.dropout)
@@ -96,7 +108,13 @@ class TriMemoCMT(nn.Module):
 
         self.linear_layer_output = cfg.linear_layer_output
 
+        self.fusion_head_output_type = cfg.fusion_head_output_type
+
         previous_dim = cfg.fusion_dim
+
+        if cfg.fusion_head_output_type == "cls_concat":
+            previous_dim = 6 * cfg.fusion_dim
+
         if len(cfg.linear_layer_output) > 0:
             for i, linear_layer in enumerate(cfg.linear_layer_output):
                 setattr(self, f"linear_{i}", nn.Linear(previous_dim, linear_layer))
@@ -105,6 +123,12 @@ class TriMemoCMT(nn.Module):
         self.classifer = nn.Linear(previous_dim, cfg.num_classes)
 
         self.fusion_head_output_type = cfg.fusion_head_output_type
+
+        # trainable = [name for name, p in self.video_encoder.named_parameters() if p.requires_grad]
+        # print("Trainable video params:")
+        # for name in trainable[:20]:
+        #     print(name)
+        # print("Total:", len(trainable))
 
     def forward(
         self,
@@ -150,8 +174,26 @@ class TriMemoCMT(nn.Module):
 
         fusion_norm = self.dropout(fusion_norm)
 
+        cls_tokens = torch.stack([
+            text_audio[:, 0, :],
+            text_video[:, 0, :],
+            audio_text[:, 0, :],
+            audio_video[:, 0, :],
+            video_audio[:, 0, :],
+            video_text[:, 0, :],
+        ], dim=1)  # [B, 6, hidden]
+
+        B = text_audio.size(0)
+
+        num_cross = cls_tokens.size(1)
+        hidden_size = cls_tokens.size(2)
+
         # Get classification output
-        if self.fusion_head_output_type == "cls":
+        if self.fusion_head_output_type == "cls_concat":
+            cls_token_final_fusion_norm = cls_tokens.reshape(B, num_cross * hidden_size)
+        elif self.fusion_head_output_type == "cls_mean":
+            cls_token_final_fusion_norm = cls_tokens.mean(dim=1)  # [B, hidden]
+        elif self.fusion_head_output_type == "cls":
             cls_token_final_fusion_norm = fusion_norm[:, 0, :]
         elif self.fusion_head_output_type == "mean":
             cls_token_final_fusion_norm = fusion_norm.mean(dim=1)
@@ -165,6 +207,9 @@ class TriMemoCMT(nn.Module):
         # Classification head
         x = cls_token_final_fusion_norm
         x = self.dropout(x)
+
+        # print(x.shape)
+        # print(fusion_norm[:, 0, :].shape)
         for i, _ in enumerate(self.linear_layer_output):
             x = getattr(self, f"linear_{i}")(x)
             x = nn.functional.leaky_relu(x)
