@@ -43,6 +43,13 @@ class Trainer(TorchTrainer):
 
         # Backward pass
         loss.backward()
+
+        # just to see if the weights are getting updated in the video branch
+        # for name, p in self.network.video_encoder.named_parameters():
+        #     if name == "model.model.blocks.9.attn.qkv.weight":
+        #         print(name, None if p.grad is None else p.grad.abs().mean().item())
+        #         break
+
         self.optimizer.step()
 
         # Calculate accuracy
