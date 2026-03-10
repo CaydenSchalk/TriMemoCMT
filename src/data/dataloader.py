@@ -10,6 +10,9 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import (
     BertTokenizer,
     RobertaTokenizer,
+    VideoMAEImageProcessor,
+    AutoModel,
+    AutoConfig
 )
 import torchaudio
 
@@ -18,6 +21,7 @@ from configs.base import Config
 from torchvggish.vggish_input import waveform_to_examples
 from tqdm.auto import tqdm
 import pickle
+import cv2
 import librosa
 
 
@@ -48,15 +52,21 @@ class BaseDataset(Dataset):
 
         self.audio_max_length = cfg.audio_max_length
         self.text_max_length = cfg.text_max_length
+        self.video_max_length = cfg.video_max_length
+
+        self.video_processor = VideoMAEImageProcessor.from_pretrained("OpenGVLab/VideoMAEv2-Base")
+
         if cfg.batch_size == 1:
             self.audio_max_length = None
             self.text_max_length = None
+            self.video_max_length = None
 
         self.audio_encoder_type = cfg.audio_encoder_type
 
         self.encode_data = False
         self.list_encode_audio_data = []
         self.list_encode_text_data = []
+        self.list_encode_video_data = []
         if encoder_model is not None:
             self._encode_data(encoder_model)
             self.encode_data = True
@@ -67,7 +77,7 @@ class BaseDataset(Dataset):
         encoder.train()
         encoder.to(device)
         for index in tqdm(range(len(self.data_list))):
-            audio_path, text, _ = self.data_list[index]
+            video_path, audio_path, text, _ = self.data_list[index]
 
             samples = self.__paudio__(audio_path)
             audio_embedding = (
@@ -77,6 +87,15 @@ class BaseDataset(Dataset):
                 .cpu()
             )
             self.list_encode_audio_data.append(audio_embedding)
+
+            frames = self.__pvideo__(video_path)
+            video_embedding = (
+                encoder.encode_video(frames.unsqueeze(0).to(device))
+                .squeeze(0)
+                .detach()
+                .cpu()
+            )
+            self.list_encode_video_data.append(video_embedding)
 
             input_ids = self.__ptext__(text)
             text_embedding = (
@@ -89,9 +108,9 @@ class BaseDataset(Dataset):
 
     def __getitem__(
         self, index: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
-        audio_path, text, label = self.data_list[index]
+        video_path, audio_path, text, label = self.data_list[index]
         input_audio = (
             self.list_encode_audio_data[index]
             if self.encode_data
@@ -104,7 +123,38 @@ class BaseDataset(Dataset):
         )
         label = self.__plabel__(label)
 
-        return input_text, input_audio, label
+        input_video = (
+            self.list_encode_video_data[index]
+            if self.encode_data
+            else self.__pvideo__(video_path)
+        )
+
+        return input_video, input_text, input_audio, label
+
+    def __pvideo__(self, file_path: str) -> torch.Tensor:
+        cap = cv2.VideoCapture(file_path)
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video: {file_path}")
+
+        frames = []
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(frame)
+        cap.release()
+
+        if len(frames) == 0:
+            raise ValueError(f"Empty video: {file_path}")
+
+        T = self.video_max_length if self.video_max_length is not None else 16
+        idx = np.linspace(0, len(frames) - 1, T).astype(int)
+        frames = [frames[i] for i in idx]  # list of [H, W, C] numpy arrays
+
+        inputs = self.video_processor(frames, return_tensors="pt")
+        return inputs["pixel_values"].squeeze(0)  # remove batch dim, dataloader will re-add it
+
 
     def __paudio__(self, file_path: str) -> torch.Tensor:
         samples, sr = sf.read(file_path, dtype="float32")

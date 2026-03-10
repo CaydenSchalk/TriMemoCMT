@@ -14,3 +14,5 @@ h5py==3.9.0
 torchsummary==1.5.1
 moviepy
 resampy
+easydict
+timm
