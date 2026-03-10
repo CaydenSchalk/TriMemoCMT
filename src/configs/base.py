@@ -162,6 +162,7 @@ class Config(BaseConfig):
         self.video_encoder_type: str = "VideoMAEv2"
         self.video_encoder_dim: int = 768
         self.video_unfreeze: bool = False
+        self.video_unfreeze_amount: int = 3
 
         self.fusion_dim: int = 768
         self.fusion_head_output_type: str = "cls"  # [cls, mean, max]
