@@ -55,7 +55,6 @@ def export_mp4_to_audio(
     audio.write_audiofile(wav_file, verbose=verbose)
     return 1
 
-
 def preprocess_IEMOCAP(args):
     data_root = args.data_root
     ignore_length = args.ignore_length
@@ -64,89 +63,145 @@ def preprocess_IEMOCAP(args):
 
     samples = []
     labels = []
-    iemocap2label = LABEL_MAP
+    iemocap2label = LABEL_MAP.copy()
     iemocap2label.update({"exc": 1})
+    output_root = args.dataset + "_preprocessed"
+    video_output_root = os.path.join(output_root, "video_clips")
 
     for sess_id in tqdm.tqdm(session_id):
-        sess_path = os.path.join(data_root, "Session{}".format(sess_id))
-        sess_autio_root = os.path.join(sess_path, "sentences/wav")
-        sess_text_root = os.path.join(sess_path, "dialog/transcriptions")
-        sess_label_root = os.path.join(sess_path, "dialog/EmoEvaluation")
+        sess_path = os.path.join(data_root, f"Session{sess_id}")
+        sess_audio_root = os.path.join(sess_path, "sentences", "wav")
+        sess_text_root = os.path.join(sess_path, "dialog", "transcriptions")
+        sess_label_root = os.path.join(sess_path, "dialog", "EmoEvaluation")
+        sess_video_root = os.path.join(sess_path, "dialog", "avi", "DivX")
+
         label_paths = glob.glob(os.path.join(sess_label_root, "*.txt"))
+
         for l_path in label_paths:
             l_name = os.path.basename(l_path)
             transcripts_path = os.path.join(sess_text_root, l_name)
+
             with open(transcripts_path, "r") as f:
                 transcripts = f.readlines()
                 transcripts = {
-                    t.split(":")[0]: t.split(":")[1].strip() for t in transcripts
+                    t.split(":")[0]: t.split(":")[1].strip()
+                    for t in transcripts
                 }
-            with open(l_path, "r") as f:
-                label = f.read().split("\n")
-                for l in label:
-                    if str(l).startswith("["):
-                        data = l[1:].split()
-                        wav_folder = data[3][:-5]
-                        wav_name = data[3] + ".wav"
-                        emo = data[4]
-                        wav_path = os.path.join(sess_autio_root, wav_folder, wav_name)
-                        wav_data, _ = sf.read(wav_path, dtype="int16")
-                        # Ignore samples with length < ignore_length
-                        if len(wav_data) < ignore_length:
-                            logging.warning(
-                                f"Ignoring sample {wav_path} with length {len(wav_data)}"
-                            )
-                            continue
-                        emo = iemocap2label.get(emo, None)
-                        text_query = data[3] + " [{:08.4f}-{:08.4f}]".format(
-                            float(data[0]), float(data[2][:-1])
-                        )
-                        if emo is not None:
-                            text = transcripts.get(text_query, None)
-                            if text is None:
-                                text_query = data[3] + " [{:08.4f}-{:08.4f}]".format(
-                                    float(data[0]), (float(data[2][:-1]) + 0.0001)
-                                )
-                                text = transcripts.get(text_query, None)
-                                if text is None:
-                                    text_query = data[
-                                        3
-                                    ] + " [{:08.4f}-{:08.4f}]".format(
-                                        float(data[0]) + 0.0001, float(data[2][:-1])
-                                    )
-                                    text = transcripts.get(text_query, None)
-                                    if text is None:
-                                        print(transcripts.keys())
-                                        print(text_query)
-                                        raise Exception
-                            samples.append((wav_path, text, emo))
-                            labels.append(emo)
 
-    # Shuffle and split
+            with open(l_path, "r") as f:
+                label_lines = f.read().split("\n")
+
+            for l in label_lines:
+                if not str(l).startswith("["):
+                    continue
+
+                data = l[1:].split()
+                utt_id = data[3]
+                dialog_id = utt_id[:-5]
+                emo = data[4]
+                start_time = float(data[0])
+                end_time = float(data[2][:-1])
+
+                wav_path = os.path.join(sess_audio_root, dialog_id, f"{utt_id}.wav")
+                dialog_video_path = os.path.join(sess_video_root, f"{dialog_id}.avi")
+                clip_output_dir = os.path.join(
+                    video_output_root, f"Session{sess_id}"
+                )
+                video_path = os.path.join(clip_output_dir, f"{utt_id}.mp4")
+
+                if not os.path.exists(dialog_video_path):
+                    logging.warning(f"Missing video file: {dialog_video_path}")
+                    continue
+
+                wav_data, _ = sf.read(wav_path, dtype="int16")
+                if len(wav_data) < ignore_length:
+                    logging.warning(
+                        f"Ignoring sample {wav_path} with length {len(wav_data)}"
+                    )
+                    continue
+
+                emo = iemocap2label.get(emo, None)
+                if emo is None:
+                    continue
+
+                os.makedirs(clip_output_dir, exist_ok=True)
+                if not os.path.exists(video_path):
+                    try:
+                        subprocess.run(
+                            [
+                                "ffmpeg",
+                                "-y",
+                                "-ss",
+                                str(start_time),
+                                "-i",
+                                dialog_video_path,
+                                "-t",
+                                str(end_time - start_time),
+                                "-c:v",
+                                "libx264",
+                                "-c:a",
+                                "aac",
+                                "-loglevel",
+                                "error",
+                                video_path,
+                            ],
+                            capture_output=True,
+                            check=True,
+                        )
+                    except Exception as e:
+                        logging.warning(
+                            f"Can not clip video data: {dialog_video_path}\nException: {e}"
+                        )
+                        continue
+
+                text_query = utt_id + " [{:08.4f}-{:08.4f}]".format(
+                    start_time, end_time
+                )
+                text = transcripts.get(text_query, None)
+
+                if text is None:
+                    text_query = utt_id + " [{:08.4f}-{:08.4f}]".format(
+                        start_time, end_time + 0.0001
+                    )
+                    text = transcripts.get(text_query, None)
+
+                if text is None:
+                    text_query = utt_id + " [{:08.4f}-{:08.4f}]".format(
+                        start_time + 0.0001, end_time
+                    )
+                    text = transcripts.get(text_query, None)
+
+                if text is None:
+                    logging.warning(f"Missing transcript for utterance: {utt_id}")
+                    continue
+
+                samples.append((video_path, wav_path, text, emo))
+                labels.append(emo)
+
     temp = list(zip(samples, labels))
     random.Random(args.seed).shuffle(temp)
     samples, labels = zip(*temp)
+
     train, test_samples, train_labels, _ = train_test_split(
         samples, labels, test_size=0.1, random_state=args.seed
     )
     train_samples, val_samples, _, _ = train_test_split(
         train, train_labels, test_size=0.1, random_state=args.seed
     )
-    # Save data
-    os.makedirs(args.dataset + "_preprocessed", exist_ok=True)
-    with open(os.path.join(args.dataset + "_preprocessed", "train.pkl"), "wb") as f:
+
+    os.makedirs(output_root, exist_ok=True)
+    with open(os.path.join(output_root, "train.pkl"), "wb") as f:
         pickle.dump(train_samples, f)
-    with open(os.path.join(args.dataset + "_preprocessed", "val.pkl"), "wb") as f:
+    with open(os.path.join(output_root, "val.pkl"), "wb") as f:
         pickle.dump(val_samples, f)
-    with open(os.path.join(args.dataset + "_preprocessed", "test.pkl"), "wb") as f:
+    with open(os.path.join(output_root, "test.pkl"), "wb") as f:
         pickle.dump(test_samples, f)
 
     logging.info(f"Train samples: {len(train_samples)}")
     logging.info(f"Val samples: {len(val_samples)}")
     logging.info(f"Test samples: {len(test_samples)}")
-    logging.info(f"Saved to {args.dataset + '_preprocessed'}")
+    logging.info(f"Saved to {output_root}")
     logging.info("Preprocessing finished successfully")
-
 
 def preprocess_ESD(args):
     esd2label = {
