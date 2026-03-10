@@ -29,15 +29,16 @@ class Trainer(TorchTrainer):
         self.optimizer.zero_grad()
 
         # Prepare batch
-        input_text, input_audio, label = batch
+        input_video, input_text, input_audio, label = batch
 
         # Move inputs to cpu or gpu
         input_audio = input_audio.to(self.device)
+        input_video = input_video.to(self.device)
         label = label.to(self.device)
         input_text = input_text.to(self.device)
 
         # Forward pass
-        output = self.network(input_text, input_audio)
+        output = self.network(input_text, input_audio, input_video)
         loss = self.criterion(output, label)
 
         # Backward pass
@@ -55,15 +56,16 @@ class Trainer(TorchTrainer):
     def test_step(self, batch: Dict[str, Tensor]) -> Dict[str, Tensor]:
         self.network.eval()
         # Prepare batch
-        input_text, input_audio, label = batch
+        input_video, input_text, input_audio, label = batch
 
         # Move inputs to cpu or gpu
         input_audio = input_audio.to(self.device)
         label = label.to(self.device)
         input_text = input_text.to(self.device)
+        input_video = input_video.to(self.device)
         with torch.no_grad():
             # Forward pass
-            output = self.network(input_text, input_audio)
+            output = self.network(input_text, input_audio, input_video)
             loss = self.criterion(output, label)
             # Calculate accuracy
             _, preds = torch.max(output[0], 1)

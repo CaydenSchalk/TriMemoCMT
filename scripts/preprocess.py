@@ -5,13 +5,13 @@ import logging
 import os
 import pickle
 import random
-
+import subprocess
 import pandas as pd
 import soundfile as sf
 import tqdm
 import numpy as np
 import torch
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 from sklearn.model_selection import train_test_split
 
 
@@ -266,11 +266,22 @@ def preprocess_MELD(args):
                 )
             )
             # Convert video to audio
+            # try:
+            #     videoclip = VideoFileClip(video_path)
+            #     videoclip.audio.write_audiofile(audio_path, logger=None)
+            #     # samples.append((audio_path, transcript, LABEL_MAP[label]))
+            #     samples.append((audio_path, transcript, label_map[label]))
+            # except Exception as e:
+            #     logging.warning(f"Can not preprocess video data: {video_path}\nException: {e}")
+            #     break
+
             try:
-                videoclip = VideoFileClip(video_path)
-                videoclip.audio.write_audiofile(audio_path, verbose=False)
-                # samples.append((audio_path, transcript, LABEL_MAP[label]))
-                samples.append((audio_path, transcript, label_map[label]))
+                subprocess.run([
+                    "ffmpeg", "-i", video_path,
+                    "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                    audio_path, "-y"
+                ], capture_output=True, check=True)
+                samples.append((video_path, audio_path, transcript, label_map[label]))
             except Exception as e:
                 logging.warning(f"Can not preprocess video data: {video_path}\nException: {e}")
                 break
@@ -297,7 +308,7 @@ def preprocess_MELD(args):
         pickle.dump(test_samples, f)
 
     logging.info(f"Train samples: {len(train_samples)}")
-    logging.info(f"Train samples: {len(val_samples)}")
+    logging.info(f"Val samples: {len(val_samples)}")
     logging.info(f"Test samples: {len(test_samples)}")
     logging.info(f"Saved to {args.dataset + '_preprocessed'}")
     logging.info("Preprocessing finished successfully")
