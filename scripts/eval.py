@@ -227,14 +227,14 @@ def arg_parser():
         "-cm",
         "--confusion_matrix",
         action="store_true",
-        help="whether to export consution matrix or not",
+        help="whether to export confusion matrix or not",
     )
 
     parser.add_argument(
         "--data_root",
         type=str,
         default=None,
-        help="If want to change the validation dataset",
+        help="If you wish to change the validation dataset",
     )
     parser.add_argument(
         "--data_name", type=str, default=None, help="for changing validation dataset"
