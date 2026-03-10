@@ -12,7 +12,7 @@ class Config(BaseConfig):
 
     def add_args(self, **kwargs):
         self.batch_size = 1
-        self.num_epochs = 100
+        self.num_epochs = 20
 
         self.loss_type = "CrossEntropyLoss"
 
@@ -28,6 +28,10 @@ class Config(BaseConfig):
         self.audio_encoder_dim = 768
         self.audio_unfreeze = False
 
+        self.video_encoder_type: str = "VideoMAEv2"
+        self.video_encoder_dim: int = 768
+        self.video_unfreeze: bool = False
+
         self.fusion_dim: int = 768
 
         # Dataset
@@ -36,10 +40,11 @@ class Config(BaseConfig):
         self.data_valid: str = "val.pkl"
         self.text_max_length: int = 297
         self.audio_max_length: int = 128000  # 160220
+        self.video_max_length: int = 128000
 
         # Config name
         self.name = (
-            f"{self.model_type}_{self.text_encoder_type}_{self.audio_encoder_type}"
+            f"{self.model_type}_{self.text_encoder_type}_{self.audio_encoder_type}_{self.video_encoder_type}"
         )
 
         for key, value in kwargs.items():

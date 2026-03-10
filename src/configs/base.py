@@ -159,6 +159,9 @@ class Config(BaseConfig):
         self.audio_encoder_type: str = "hubert_base"
         self.audio_encoder_dim: int = 768
         self.audio_unfreeze: bool = False
+        self.video_encoder_type: str = "VideoMAEv2"
+        self.video_encoder_dim: int = 768
+        self.video_unfreeze: bool = False
 
         self.fusion_dim: int = 768
         self.fusion_head_output_type: str = "cls"  # [cls, mean, max]
