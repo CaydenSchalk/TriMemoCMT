@@ -150,7 +150,7 @@ class BaseDataset(Dataset):
 
         T = self.video_max_length if self.video_max_length is not None else 16
         idx = np.linspace(0, len(frames) - 1, T).astype(int)
-        frames = [frames[i] for i in idx]  # list of [H, W, C] numpy arrays
+        frames = np.stack([frames[i] for i in idx], axis=0)  # list of [H, W, C] numpy arrays
 
         inputs = self.video_processor(frames, return_tensors="pt")
         return inputs["pixel_values"].squeeze(0)  # remove batch dim, dataloader will re-add it
