@@ -67,12 +67,13 @@ def eval(cfg, checkpoint_path, all_state_dict=True, cm=False):
     y_pred = []
 
     for every_test_list in tqdm(test_ds):
-        input_ids, audio, label = every_test_list
+        input_video, input_ids, audio, label = every_test_list
+        input_video = input_video.to(device)
         input_ids = input_ids.to(device)
         audio = audio.to(device)
         label = label.to(device)
         with torch.no_grad():
-            output = network(input_ids, audio)[0]
+            output = network(input_ids, audio, input_video)[0]
             _, preds = torch.max(output, 1)
             y_actu.append(label.detach().cpu().numpy()[0])
             y_pred.append(preds.detach().cpu().numpy()[0])
