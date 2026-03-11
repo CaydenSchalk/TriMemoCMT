@@ -123,12 +123,7 @@ class TriMemoCMT(nn.Module):
         self.classifer = nn.Linear(previous_dim, cfg.num_classes)
 
         self.fusion_head_output_type = cfg.fusion_head_output_type
-
-        # trainable = [name for name, p in self.video_encoder.named_parameters() if p.requires_grad]
-        # print("Trainable video params:")
-        # for name in trainable[:20]:
-        #     print(name)
-        # print("Total:", len(trainable))
+        self.video_cls_token = nn.Parameter(torch.randn(1, 1, cfg.video_encoder_dim))
 
     def forward(
         self,
@@ -139,7 +134,11 @@ class TriMemoCMT(nn.Module):
     ):
 
         text_embeddings = self.text_encoder(input_text).last_hidden_state
-        video_embeddings = self.video_encoder(input_video)
+
+        # add a CLS token at the beginning
+        video_embeddings = self.video_encoder(input_video)  # (B, num_patches, 768)
+        cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)  # (B, 1, 768)
+        video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, 1+num_patches, 768)
 
         if len(input_audio.size()) != 2:
             batch_size, num_samples = input_audio.size(0), input_audio.size(1)
