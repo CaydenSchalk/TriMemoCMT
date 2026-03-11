@@ -125,6 +125,12 @@ class TriMemoCMT(nn.Module):
         self.fusion_head_output_type = cfg.fusion_head_output_type
         self.video_cls_token = nn.Parameter(torch.randn(1, 1, cfg.video_encoder_dim))
 
+        self.video_self_attn = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d_model=cfg.video_encoder_dim, nhead=cfg.num_attention_head, dropout=cfg.dropout,
+                                       batch_first=True),
+            num_layers=2
+        )
+
     def forward(
         self,
         input_text: torch.Tensor,
@@ -137,8 +143,13 @@ class TriMemoCMT(nn.Module):
 
         # add a CLS token at the beginning
         video_embeddings = self.video_encoder(input_video)  # (B, num_patches, 768)
-        cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)  # (B, 1, 768)
-        video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, 1+num_patches, 768)
+
+        # cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)  # (B, 1, 768)
+        # video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, 1+num_patches, 768)
+
+        cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)
+        video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, N+1, 768)
+        video_embeddings = self.video_self_attn(video_embeddings)
 
         if len(input_audio.size()) != 2:
             batch_size, num_samples = input_audio.size(0), input_audio.size(1)
