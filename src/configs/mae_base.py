@@ -12,7 +12,7 @@ class Config(BaseConfig):
 
     def add_args(self, **kwargs):
         self.batch_size = 1
-        self.num_epochs = 20
+        self.num_epochs = 30
 
         self.loss_type = "CrossEntropyLoss"
 
@@ -41,8 +41,8 @@ class Config(BaseConfig):
         self.data_valid: str = "val.pkl"
         self.text_max_length: int = 297
         self.audio_max_length: int = 128000  # 160220
-        self.video_max_length: int = 128000
-        self.fusion_head_output_type: str = "cls_concat"
+        self.video_max_length: int = 16
+        self.fusion_head_output_type = "cls_mean"
 
         # Config name
         self.name = (
