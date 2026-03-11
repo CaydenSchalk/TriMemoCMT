@@ -45,7 +45,7 @@ class MAEBase(nn.Module):
         return x
 
 def build_mae_encoder(cfg : Config) -> nn.Module:
-    """A function to build bert encoder"""
+    """A function to build the VideoMAEv2 encoder"""
     return MAEBase()
 
 def build_bert_encoder() -> nn.Module:
