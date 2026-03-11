@@ -40,7 +40,7 @@ class Config(BaseConfig):
         self.data_valid: str = "val.pkl"
         self.text_max_length: int = 297
         self.audio_max_length: int = 128000  # 160220
-        self.video_max_length: int = 128000
+        self.video_max_length: int = 16
 
         # Config name
         self.name = (
