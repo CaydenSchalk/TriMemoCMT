@@ -59,7 +59,7 @@ def eval(cfg, checkpoint_path, all_state_dict=True, cm=False):
     if all_state_dict:
         weight = weight["state_dict_network"]
 
-    network.load_state_dict(weight)
+    network.load_state_dict(weight, strict=False)
     network.eval()
     network.to(device)
 
