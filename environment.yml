@@ -1,4 +1,4 @@
-name: TestSER
+name: TriMemoCMT
 channels:
   - pytorch
   - conda-forge
