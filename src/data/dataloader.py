@@ -245,7 +245,7 @@ class BaseDataset(Dataset):
         # Normal path: disk-cached preprocessed tensors
         cache_file = self._cache_path(index)
         if cache_file.exists():
-            payload = torch.load(cache_file, weights_only=True)
+            payload = torch.load(cache_file)
             return (
                 payload["video"],
                 payload["text"],
@@ -387,11 +387,15 @@ def build_train_test_dataset(
         batch_size=cfg.batch_size,
         shuffle=True,
         num_workers=cfg.num_workers,
+        pin_memory=True,
+        persistent_workers=cfg.num_workers > 0,
     )
     test_dataloader = DataLoader(
         test_data,
         batch_size=1,
         shuffle=False,
         num_workers=cfg.num_workers,
+        pin_memory=True,
+        persistent_workers=cfg.num_workers > 0,
     )
     return train_dataloader, test_dataloader
