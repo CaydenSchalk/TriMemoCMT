@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --time=0:10:00
+#SBATCH --time=0:15:00
 #SBATCH --output=/projects/bgok/cschalk/Quals/logs/%x-%j.out
 #SBATCH --error=/projects/bgok/cschalk/Quals/logs/%x-%j.err
 #SBATCH --mail-user=chs3u@mtmail.mtsu.edu
