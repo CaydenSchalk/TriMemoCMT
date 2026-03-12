@@ -4,7 +4,7 @@
 #SBATCH --account=bgok-delta-gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
 #SBATCH --time=5:00:00
@@ -27,6 +27,10 @@ conda activate TriMemoCMT
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $(hostname)"
 echo "CUDA visible devices: $CUDA_VISIBLE_DEVICES"
+echo "CPUs allocated: $SLURM_CPUS_PER_TASK"
+
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
 nvidia-smi
 

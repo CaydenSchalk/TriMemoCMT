@@ -13,7 +13,7 @@ class Config(BaseConfig):
     def add_args(self, **kwargs):
         self.batch_size = 1
         self.num_epochs = 30
-        self.num_workers = 16
+        self.num_workers = 12
         self.loss_type = "CrossEntropyLoss"
 
         self.checkpoint_dir = str(PROJECT_ROOT / "checkpoints" / "IEMOCAP")
