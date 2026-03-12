@@ -11,7 +11,13 @@ import soundfile as sf
 import tqdm
 import numpy as np
 import torch
-from moviepy import VideoFileClip
+
+# having issues importing on the HPC
+try:
+    from moviepy import VideoFileClip
+except ImportError:
+    from moviepy.editor import VideoFileClip
+
 from sklearn.model_selection import train_test_split
 from pathlib import Path
 
