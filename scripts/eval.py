@@ -100,7 +100,7 @@ def eval(cfg, checkpoint_path, all_state_dict=True, cm=False):
         ax.xaxis.set_label_position("bottom")
         label_names = ["Anger", "Happiness", "Sadness", "Neutral"]
         if cfg.num_classes != 4:
-            with open(os.path.join(cfg.data_root, "classes.json"), "r") as f:
+            with open(os.path.join(cfg.processed_root, cfg.data_name, "classes.json"), "r") as f:
                 label_data = json.load(f)
                 label_names = label_data.keys()
 
@@ -164,11 +164,11 @@ def main(args):
             cfg.load(cfg_path)
             # Change to test set
             cfg.data_valid = test_set
-            if args.data_root is not None:
-                assert (
-                    args.data_name is not None
-                ), "Change validation dataset requires data_name"
-                cfg.data_root = args.data_root
+            if args.raw_root is not None:
+                cfg.raw_root = args.raw_root
+            if args.processed_root is not None:
+                cfg.processed_root = args.processed_root
+            if args.data_name is not None:
                 cfg.data_name = args.data_name
 
             bacc, acc, macro_f1, weighted_f1 = eval(
@@ -231,15 +231,9 @@ def arg_parser():
         help="whether to export confusion matrix or not",
     )
 
-    parser.add_argument(
-        "--data_root",
-        type=str,
-        default=None,
-        help="If you wish to change the validation dataset",
-    )
-    parser.add_argument(
-        "--data_name", type=str, default=None, help="for changing validation dataset"
-    )
+    parser.add_argument("--raw_root", type=str, default=None)
+    parser.add_argument("--processed_root", type=str, default=None)
+    parser.add_argument("--data_name", type=str, default=None)
 
     return parser.parse_args()
 
@@ -263,11 +257,11 @@ if __name__ == "__main__":
         # Change to test set
         test_set = args.test_set if args.test_set is not None else "test.pkl"
         cfg.data_valid = test_set
-        if args.data_root is not None:
-            assert (
-                args.data_name is not None
-            ), "Change validation dataset requires data_name"
-            cfg.data_root = args.data_root
+        if args.raw_root is not None:
+            cfg.raw_root = args.raw_root
+        if args.processed_root is not None:
+            cfg.processed_root = args.processed_root
+        if args.data_name is not None:
             cfg.data_name = args.data_name
 
         bacc, acc, macro_f1, weighted_f1 = eval(
