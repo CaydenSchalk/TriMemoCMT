@@ -13,6 +13,7 @@ import numpy as np
 import torch
 from moviepy import VideoFileClip
 from sklearn.model_selection import train_test_split
+from pathlib import Path
 
 
 SEED = 0
@@ -33,6 +34,16 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
+def ensure_dir(path):
+    Path(path).mkdir(parents=True, exist_ok=True)
+
+def save_pickle(obj, path):
+    ensure_dir(Path(path).parent)
+    with open(path, "wb") as f:
+        pickle.dump(obj, f)
+
+def relpath_str(path, start):
+    return str(Path(path).resolve().relative_to(Path(start).resolve()))
 
 def export_mp4_to_audio(
     mp4_file: str,
@@ -65,7 +76,7 @@ def preprocess_IEMOCAP(args):
     labels = []
     iemocap2label = LABEL_MAP.copy()
     iemocap2label.update({"exc": 1})
-    output_root = args.dataset + "_preprocessed"
+    output_root = os.path.join(args.output_root, args.dataset)
     video_output_root = os.path.join(output_root, "video_clips")
 
     for sess_id in tqdm.tqdm(session_id):
@@ -175,7 +186,10 @@ def preprocess_IEMOCAP(args):
                     logging.warning(f"Missing transcript for utterance: {utt_id}")
                     continue
 
-                samples.append((video_path, wav_path, text, emo))
+                video_rel = os.path.relpath(video_path, output_root)
+                audio_rel = os.path.relpath(wav_path, args.data_root)
+
+                samples.append((video_rel, audio_rel, text, emo))
                 labels.append(emo)
 
     temp = list(zip(samples, labels))
@@ -226,12 +240,11 @@ def preprocess_ESD(args):
             filename, transcript, emotion = l.split("\t")
             target = esd2label.get(emotion, None)
             if target is not None:
+                audio_path = os.path.join(dir, emotion, filename + ".wav")
+                audio_rel = os.path.relpath(audio_path, args.data_root)
+
                 samples.append(
-                    (
-                        os.path.abspath(os.path.join(dir, emotion, filename + ".wav")),
-                        transcript,
-                        LABEL_MAP[target],
-                    )
+                    (None, audio_rel, transcript, LABEL_MAP[target])
                 )
                 # Labels are use for splitting
                 labels.append(LABEL_MAP[target])
@@ -248,12 +261,12 @@ def preprocess_ESD(args):
     )
 
     # Save data
-    os.makedirs(args.dataset + "_preprocessed", exist_ok=True)
-    with open(os.path.join(args.dataset + "_preprocessed", "train.pkl"), "wb") as f:
+    output_root = os.path.join(args.output_root, args.dataset)
+    with open(os.path.join(output_root, "train.pkl"), "wb") as f:
         pickle.dump(train_samples, f)
-    with open(os.path.join(args.dataset + "_preprocessed", "val.pkl"), "wb") as f:
+    with open(os.path.join(output_root, "val.pkl"), "wb") as f:
         pickle.dump(val_samples, f)
-    with open(os.path.join(args.dataset + "_preprocessed", "test.pkl"), "wb") as f:
+    with open(os.path.join(output_root, "test.pkl"), "wb") as f:
         pickle.dump(test_samples, f)
 
     logging.info(f"Train samples: {len(train_samples)}")
@@ -273,6 +286,11 @@ def preprocess_MELD(args):
 
     label_map = LABEL_MAP.copy()
 
+    output_root = os.path.join(args.output_root, args.dataset)
+    video_output_root = os.path.join(output_root, "video_clips")
+    os.makedirs(output_root, exist_ok=True)
+    os.makedirs(video_output_root, exist_ok=True)
+
     train_csv = os.path.join(args.data_root, "train_sent_emo.csv")
     val_csv = os.path.join(args.data_root, "dev_sent_emo.csv")
     test_csv = os.path.join(args.data_root, "test_sent_emo.csv")
@@ -280,92 +298,133 @@ def preprocess_MELD(args):
     train_dataframe = pd.read_csv(train_csv)
     val_dataframe = pd.read_csv(val_csv)
     test_dataframe = pd.read_csv(test_csv)
+
     if args.all_classes:
         meld2label = {}
-        # LABEL_MAP = {}
         label_map = {}
-        labels = []
-        for _, row in test_dataframe.iterrows():
-            labels.append(row.Emotion)
-        labels = list(set(labels))
+        labels = sorted(list(set(str(row.Emotion) for _, row in test_dataframe.iterrows())))
         for i, label_name in enumerate(labels):
             meld2label[label_name] = i
-        for i in range(len(labels)):
-            # LABEL_MAP[i] = i
             label_map[i] = i
 
-
-
-        # Save labels
-        os.makedirs(args.dataset + "_preprocessed", exist_ok=True)
-        with open(os.path.join(args.dataset + "_preprocessed", "classes.json"), "w") as f:
+        with open(os.path.join(output_root, "classes.json"), "w") as f:
             json.dump(meld2label, f)
 
-    def _preprocess_data(data_path, dataframe):
+    def _preprocess_data(split_name, data_path, dataframe):
         samples = []
-        # Loop through all folders
-        for _, row in tqdm.tqdm(dataframe.iterrows()):
-            # Read label file
+
+        split_video_root = os.path.join(video_output_root, split_name)
+        os.makedirs(split_video_root, exist_ok=True)
+
+        for _, row in tqdm.tqdm(dataframe.iterrows(), total=len(dataframe)):
             label = meld2label.get(row.Emotion, None)
             if label is None:
                 continue
-            transcript = str(row.Utterance)
-            video_path = os.path.abspath(
-                os.path.join(
-                    data_path, f"dia{row.Dialogue_ID}_utt{row.Utterance_ID}.mp4"
-                )
-            )
-            audio_path = os.path.abspath(
-                os.path.join(
-                    data_path, f"dia{row.Dialogue_ID}_utt{row.Utterance_ID}.wav"
-                )
-            )
-            # Convert video to audio
-            # try:
-            #     videoclip = VideoFileClip(video_path)
-            #     videoclip.audio.write_audiofile(audio_path, logger=None)
-            #     # samples.append((audio_path, transcript, LABEL_MAP[label]))
-            #     samples.append((audio_path, transcript, label_map[label]))
-            # except Exception as e:
-            #     logging.warning(f"Can not preprocess video data: {video_path}\nException: {e}")
-            #     break
 
-            try:
-                subprocess.run([
-                    "ffmpeg", "-i", video_path,
-                    "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-                    audio_path, "-y"
-                ], capture_output=True, check=True)
-                samples.append((video_path, audio_path, transcript, label_map[label]))
-            except Exception as e:
-                logging.warning(f"Can not preprocess video data: {video_path}\nException: {e}")
-                break
+            transcript = str(row.Utterance)
+
+            filename = f"dia{row.Dialogue_ID}_utt{row.Utterance_ID}"
+            raw_video_path = os.path.join(data_path, f"{filename}.mp4")
+
+            # keep audio relative to args.data_root, same as IEMOCAP
+            raw_audio_path = os.path.join(data_path, f"{filename}.wav")
+
+            # keep video relative to output_root, same as IEMOCAP
+            processed_video_path = os.path.join(split_video_root, f"{filename}.mp4")
+
+            if not os.path.exists(raw_video_path):
+                logging.warning(f"Missing video file: {raw_video_path}")
+                continue
+
+            # copy video into processed area if it is not there yet
+            if not os.path.exists(processed_video_path):
+                try:
+                    subprocess.run(
+                        [
+                            "ffmpeg",
+                            "-y",
+                            "-i",
+                            raw_video_path,
+                            "-c:v",
+                            "libx264",
+                            "-c:a",
+                            "aac",
+                            "-loglevel",
+                            "error",
+                            processed_video_path,
+                        ],
+                        capture_output=True,
+                        check=True,
+                    )
+                except Exception as e:
+                    logging.warning(
+                        f"Can not copy/process video data: {raw_video_path}\nException: {e}"
+                    )
+                    continue
+
+            # extract audio next to raw video so audio_rel is relative to args.data_root
+            if not os.path.exists(raw_audio_path):
+                try:
+                    subprocess.run(
+                        [
+                            "ffmpeg",
+                            "-y",
+                            "-i",
+                            raw_video_path,
+                            "-vn",
+                            "-acodec",
+                            "pcm_s16le",
+                            "-ar",
+                            "16000",
+                            "-ac",
+                            "1",
+                            "-loglevel",
+                            "error",
+                            raw_audio_path,
+                        ],
+                        capture_output=True,
+                        check=True,
+                    )
+                except Exception as e:
+                    logging.warning(
+                        f"Can not extract audio data: {raw_video_path}\nException: {e}"
+                    )
+                    continue
+
+            video_rel = os.path.relpath(processed_video_path, output_root)
+            audio_rel = os.path.relpath(raw_audio_path, args.data_root)
+
+            samples.append((video_rel, audio_rel, transcript, label_map[label]))
 
         return samples
 
     train_samples = _preprocess_data(
-        os.path.join(args.data_root, "train_splits"), train_dataframe
+        "train",
+        os.path.join(args.data_root, "train_splits"),
+        train_dataframe,
     )
     val_samples = _preprocess_data(
-        os.path.join(args.data_root, "dev_splits_complete"), val_dataframe
+        "val",
+        os.path.join(args.data_root, "dev_splits_complete"),
+        val_dataframe,
     )
     test_samples = _preprocess_data(
-        os.path.join(args.data_root, "output_repeated_splits_test"), test_dataframe
+        "test",
+        os.path.join(args.data_root, "output_repeated_splits_test"),
+        test_dataframe,
     )
 
-    # Save data
-    os.makedirs(args.dataset + "_preprocessed", exist_ok=True)
-    with open(os.path.join(args.dataset + "_preprocessed", "train.pkl"), "wb") as f:
+    with open(os.path.join(output_root, "train.pkl"), "wb") as f:
         pickle.dump(train_samples, f)
-    with open(os.path.join(args.dataset + "_preprocessed", "val.pkl"), "wb") as f:
+    with open(os.path.join(output_root, "val.pkl"), "wb") as f:
         pickle.dump(val_samples, f)
-    with open(os.path.join(args.dataset + "_preprocessed", "test.pkl"), "wb") as f:
+    with open(os.path.join(output_root, "test.pkl"), "wb") as f:
         pickle.dump(test_samples, f)
 
     logging.info(f"Train samples: {len(train_samples)}")
     logging.info(f"Val samples: {len(val_samples)}")
     logging.info(f"Test samples: {len(test_samples)}")
-    logging.info(f"Saved to {args.dataset + '_preprocessed'}")
+    logging.info(f"Saved to {output_root}")
     logging.info("Preprocessing finished successfully")
 
 
@@ -388,8 +447,14 @@ def arg_parser():
         "-dr",
         "--data_root",
         type=str,
-        help="Path to folder containing IEMOCAP data",
         required=True,
+        help="Path to raw dataset root",
+    )
+    parser.add_argument(
+        "--output_root",
+        type=str,
+        required=True,
+        help="Path to processed dataset root",
     )
     parser.add_argument("--all_classes", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
@@ -399,7 +464,6 @@ def arg_parser():
         default=0,
         help="Ignore samples with length < ignore_length",
     )
-
     return parser.parse_args()
 
 
