@@ -13,12 +13,14 @@
 #SBATCH --mail-user=chs3u@mtmail.mtsu.edu
 #SBATCH --mail-type=END,FAIL
 
-set -euo pipefail
+set -eo pipefail
 
 mkdir -p /projects/bgok/cschalk/Quals/logs
 mkdir -p /projects/bgok/cschalk/Quals/checkpoints
 
 cd ~/Quals
+
+export BASHRCSOURCED=1
 source ~/.bashrc
 conda activate TriMemoCMT
 
