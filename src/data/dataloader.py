@@ -1,28 +1,21 @@
 import os
 import pickle
 import re
+from pathlib import Path
 from typing import Tuple, Union
 import logging
+
+import cv2
 import numpy as np
 import soundfile as sf
 import torch
-from torch.utils.data import DataLoader, Dataset
-from transformers import (
-    BertTokenizer,
-    RobertaTokenizer,
-    VideoMAEImageProcessor,
-    AutoModel,
-    AutoConfig
-)
 import torchaudio
+from torch.utils.data import DataLoader, Dataset
+from tqdm.auto import tqdm
+from transformers import BertTokenizer, VideoMAEImageProcessor
 
 from models.networks import TriMemoCMT
 from configs.base import Config
-from torchvggish.vggish_input import waveform_to_examples
-from tqdm.auto import tqdm
-import pickle
-import cv2
-import librosa
 
 
 class BaseDataset(Dataset):
@@ -32,29 +25,39 @@ class BaseDataset(Dataset):
         data_mode: str = "train.pkl",
         encoder_model: Union[TriMemoCMT, None] = None,
     ):
-        """Dataset for IEMOCAP
-
-        Args:
-            path (str, optional): Path to data.pkl. Defaults to "path/to/data.pkl".
-            encoder_model (_4M_SER, optional): if want to pre-encoder dataset
-        """
         super(BaseDataset, self).__init__()
 
-        with open(os.path.join(cfg.data_root, data_mode), "rb") as train_file:
+        self.cfg = cfg
+
+        # dataset root now comes from runtime processed_root + logical dataset name
+        self.dataset_root = Path(cfg.processed_root) / cfg.data_name
+
+        # raw root can either already point at the specific dataset root,
+        # or at a parent folder containing dataset subfolders
+        raw_root_path = Path(cfg.raw_root)
+        if raw_root_path.name == cfg.data_name:
+            self.raw_dataset_root = raw_root_path
+        else:
+            self.raw_dataset_root = raw_root_path / cfg.data_name
+
+        split_path = self.dataset_root / data_mode
+        with open(split_path, "rb") as train_file:
             self.data_list = pickle.load(train_file)
 
         if cfg.text_encoder_type == "bert":
             self.tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
         else:
             raise NotImplementedError(
-                "Tokenizer {} is not implemented".format(cfg.text_encoder_type)
+                f"Tokenizer {cfg.text_encoder_type} is not implemented"
             )
 
         self.audio_max_length = cfg.audio_max_length
         self.text_max_length = cfg.text_max_length
         self.video_max_length = cfg.video_max_length
 
-        self.video_processor = VideoMAEImageProcessor.from_pretrained("OpenGVLab/VideoMAEv2-Base")
+        self.video_processor = VideoMAEImageProcessor.from_pretrained(
+            "OpenGVLab/VideoMAEv2-Base"
+        )
 
         if cfg.batch_size == 1:
             self.audio_max_length = None
@@ -71,13 +74,54 @@ class BaseDataset(Dataset):
             self._encode_data(encoder_model)
             self.encode_data = True
 
+    def _resolve_sample(self, sample):
+        if isinstance(sample, dict):
+            text = sample["text"]
+            label = sample["label"]
+
+            video_rel = sample.get("video_relpath")
+            audio_rel = sample.get("audio_relpath")
+
+            video_path = None
+            audio_path = None
+
+            if video_rel is not None:
+                video_path = str(self.dataset_root / video_rel)
+
+            if audio_rel is not None:
+                audio_path = str(self.raw_dataset_root / audio_rel)
+
+            return video_path, audio_path, text, label
+
+        if isinstance(sample, (tuple, list)):
+            if len(sample) != 4:
+                raise ValueError(f"Unexpected sample format: {sample}")
+
+            video_value, audio_value, text, label = sample
+
+            # backward compatibility for old absolute-path pickles
+            if os.path.isabs(str(video_value)):
+                video_path = str(video_value)
+            else:
+                video_path = str(self.dataset_root / str(video_value))
+
+            if os.path.isabs(str(audio_value)):
+                audio_path = str(audio_value)
+            else:
+                audio_path = str(self.raw_dataset_root / str(audio_value))
+
+            return video_path, audio_path, text, label
+
+        raise TypeError(f"Unsupported sample type: {type(sample)}")
+
     def _encode_data(self, encoder):
         logging.info("Encoding data for training...")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         encoder.train()
         encoder.to(device)
+
         for index in tqdm(range(len(self.data_list))):
-            video_path, audio_path, text, _ = self.data_list[index]
+            video_path, audio_path, text, _ = self._resolve_sample(self.data_list[index])
 
             samples = self.__paudio__(audio_path)
             audio_embedding = (
@@ -110,7 +154,8 @@ class BaseDataset(Dataset):
         self, index: int
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
-        video_path, audio_path, text, label = self.data_list[index]
+        video_path, audio_path, text, label = self._resolve_sample(self.data_list[index])
+
         input_audio = (
             self.list_encode_audio_data[index]
             if self.encode_data
@@ -215,6 +260,7 @@ class BaseDataset(Dataset):
     def __ptext__(self, text: str) -> torch.Tensor:
         text = self._text_preprocessing(text)
         input_ids = self.tokenizer.encode(text, add_special_tokens=True)
+
         if self.text_max_length is not None and len(input_ids) < self.text_max_length:
             input_ids = np.pad(
                 input_ids,
@@ -224,6 +270,7 @@ class BaseDataset(Dataset):
             )
         elif self.text_max_length is not None:
             input_ids = input_ids[: self.text_max_length]
+
         return torch.from_numpy(np.asarray(input_ids))
 
     def __plabel__(self, label: int) -> torch.Tensor:
@@ -233,11 +280,14 @@ class BaseDataset(Dataset):
         return len(self.data_list)
 
 
-def build_train_test_dataset(cfg: Config, encoder_model: Union[TriMemoCMT, None] = None):
+def build_train_test_dataset(
+    cfg: Config,
+    encoder_model: Union[TriMemoCMT, None] = None
+):
     DATASET_MAP = {
         "IEMOCAP": BaseDataset,
         "ESD": BaseDataset,
-        "MELD" : BaseDataset,
+        "MELD": BaseDataset,
     }
 
     dataset = DATASET_MAP.get(cfg.data_name, None)
@@ -247,18 +297,17 @@ def build_train_test_dataset(cfg: Config, encoder_model: Union[TriMemoCMT, None]
                 cfg.data_name, DATASET_MAP.keys()
             )
         )
-    if cfg.data_name in ["IEMOCAP_MSER", "MELD_MSER"]:
-        return dataset(cfg)
 
     train_data = dataset(
         cfg,
-        data_mode="train.pkl",
+        data_mode=cfg.data_train,
         encoder_model=encoder_model,
     )
 
     if encoder_model is not None:
         encoder_model.eval()
-    test_set = cfg.data_valid if cfg.data_valid is not None else "test.pkl"
+
+    test_set = cfg.data_valid if cfg.data_valid is not None else cfg.data_test
     test_data = dataset(
         cfg,
         data_mode=test_set,
@@ -277,4 +326,5 @@ def build_train_test_dataset(cfg: Config, encoder_model: Union[TriMemoCMT, None]
         shuffle=False,
         num_workers=cfg.num_workers,
     )
-    return (train_dataloader, test_dataloader)
+
+    return train_dataloader, test_dataloader
