@@ -31,6 +31,6 @@ nvidia-smi
 cd ~/Quals/scripts
 
 python -u eval.py \
-  --checkpoint_path /projects/bgok/cschalk/Quals/checkpoints/TriMemoCMT_bert_hubert_base_VideoMAEv2/20260312-040619 \
+  --checkpoint_path /projects/bgok/cschalk/Quals/checkpoints/TriMemoCMT_bert_hubert_base_VideoMAEv2/20260312-053232 \
   --test_set test.pkl \
   --confusion_matrix
