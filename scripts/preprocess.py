@@ -155,7 +155,7 @@ def preprocess_IEMOCAP(args):
                                 "-t",
                                 str(end_time - start_time),
                                 "-c:v",
-                                "libx264",
+                                "mpeg4",
                                 "-c:a",
                                 "aac",
                                 "-loglevel",
@@ -163,11 +163,13 @@ def preprocess_IEMOCAP(args):
                                 video_path,
                             ],
                             capture_output=True,
+                            text=True,
                             check=True,
                         )
-                    except Exception as e:
+                    except subprocess.CalledProcessError as e:
                         logging.warning(
-                            f"Can not clip video data: {dialog_video_path}\nException: {e}"
+                            f"Can not clip video data: {dialog_video_path}\n"
+                            f"stderr: {e.stderr}"
                         )
                         continue
 
