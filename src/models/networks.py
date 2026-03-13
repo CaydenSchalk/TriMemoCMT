@@ -131,6 +131,14 @@ class TriMemoCMT(nn.Module):
             num_layers=2
         )
 
+        self.audio_cls_token = nn.Parameter(torch.randn(1, 1, cfg.audio_encoder_dim))
+
+        self.audio_self_attn = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d_model=cfg.audio_encoder_dim, nhead=cfg.num_attention_head, dropout=cfg.dropout,
+                                       batch_first=True),
+            num_layers=2
+        )
+
     def forward(
         self,
         input_text: torch.Tensor,
@@ -147,8 +155,9 @@ class TriMemoCMT(nn.Module):
         # cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)  # (B, 1, 768)
         # video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, 1+num_patches, 768)
 
-        cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)
-        video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, N+1, 768)
+        # video cls token
+        video_cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)
+        video_embeddings = torch.cat([video_cls, video_embeddings], dim=1)  # (B, N+1, 768)
         video_embeddings = self.video_self_attn(video_embeddings)
 
         if len(input_audio.size()) != 2:
@@ -162,6 +171,11 @@ class TriMemoCMT(nn.Module):
             )
         else:
             audio_embeddings = self.audio_encoder(input_audio)
+
+        # audio cls token
+        audio_cls = self.audio_cls_token.expand(audio_embeddings.size(0), -1, -1)
+        audio_embeddings = torch.cat([audio_cls, audio_embeddings], dim=1)  # (B, N+1, 768)
+        audio_embeddings = self.audio_self_attn(audio_embeddings)
 
         # print(f"text: {text_embeddings.shape}, audio: {audio_embeddings.shape}, video: {video_embeddings.shape}")
 
