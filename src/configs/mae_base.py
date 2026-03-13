@@ -33,7 +33,7 @@ class Config(BaseConfig):
         self.video_unfreeze: bool = True
         self.video_unfreeze_amount: int = 3
         self.dropout: float = 0.2
-        self.learning_rate_step_size: int = 8
+        # self.learning_rate_step_size: int = 8
         self.fusion_dim: int = 768
 
         # Dataset
