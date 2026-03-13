@@ -29,7 +29,7 @@ class BaseDataset(Dataset):
         super(BaseDataset, self).__init__()
         self.cfg = cfg
 
-        # dataset root now comes from runtime processed_root + logical dataset name
+        # dataset root comes from runtime processed_root + logical dataset name
         self.dataset_root = Path(cfg.processed_root) / cfg.data_name
 
         # raw root can either already point at the specific dataset root,
@@ -65,12 +65,12 @@ class BaseDataset(Dataset):
 
         self.audio_encoder_type = cfg.audio_encoder_type
 
-        # ── Disk cache setup ──────────────────────────────────────────
+        # setup disk cache
         split_name = Path(data_mode).stem  # "train", "val", "test"
         self._cache_dir = self.dataset_root / "cache" / split_name
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Config fingerprint — cache auto-invalidates when these change
+        # config fingerprint
         config_str = (
             f"audio_max={self.audio_max_length}|"
             f"text_max={self.text_max_length}|"
@@ -81,7 +81,7 @@ class BaseDataset(Dataset):
         )
         self._config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
 
-        # ── Encoder embedding cache (stage-2, unchanged) ──────────────
+        # encoder embedding cache
         self.encode_data = False
         self.list_encode_audio_data = []
         self.list_encode_text_data = []
@@ -90,7 +90,7 @@ class BaseDataset(Dataset):
             self._encode_data(encoder_model)
             self.encode_data = True
 
-    # ── Cache helpers ─────────────────────────────────────────────────
+    # cache helpers
 
     def _sample_cache_key(self, index: int) -> str:
         """Deterministic cache key for a given sample index."""
@@ -154,7 +154,7 @@ class BaseDataset(Dataset):
 
         return payload
 
-    # ── Sample resolution ─────────────────────────────────────────────
+    # Sample resolution
 
     def _resolve_sample(self, sample):
         if isinstance(sample, dict):
@@ -186,7 +186,7 @@ class BaseDataset(Dataset):
 
         raise TypeError(f"Unsupported sample type: {type(sample)}")
 
-    # ── Encoder embedding pre-computation (stage-2) ───────────────────
+    # Encoder embedding pre-comp
 
     def _encode_data(self, encoder):
         logging.info("Encoding data for training...")
@@ -226,13 +226,11 @@ class BaseDataset(Dataset):
             )
             self.list_encode_text_data.append(text_embedding)
 
-    # ── __getitem__ ───────────────────────────────────────────────────
-
     def __getitem__(
         self, index: int
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
-        # Fast path: pre-computed encoder embeddings (stage-2)
+        # use pre-computed encoder embeddings
         if self.encode_data:
             _, _, _, label = self._resolve_sample(self.data_list[index])
             return (
@@ -242,7 +240,7 @@ class BaseDataset(Dataset):
                 self.__plabel__(label),
             )
 
-        # Normal path: disk-cached preprocessed tensors
+        # disc-cached preprocessed tensors
         cache_file = self._cache_path(index)
         if cache_file.exists():
             payload = torch.load(cache_file)
@@ -253,7 +251,7 @@ class BaseDataset(Dataset):
                 payload["label"],
             )
 
-        # Cache miss — preprocess, persist, return
+        # no cache, make them as normal
         payload = self._preprocess_and_cache(index)
         return (
             payload["video"],
@@ -262,7 +260,7 @@ class BaseDataset(Dataset):
             payload["label"],
         )
 
-    # ── Preprocessing helpers (unchanged) ─────────────────────────────
+    # Preprocessing
 
     def __pvideo__(self, file_path: str) -> torch.Tensor:
         cap = cv2.VideoCapture(file_path)
