@@ -4,12 +4,9 @@ from configs.base import Config
 
 
 class CrossEntropyLoss(CELoss):
-    """Rewrite CrossEntropyLoss to support init with kwargs"""
-
     def __init__(self, cfg: Config, **kwargs):
-        super(CrossEntropyLoss, self).__init__(**kwargs)
+        super(CrossEntropyLoss, self).__init__(ignore_index=-100, **kwargs)
         self.cfg = cfg
 
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        out = input[0]
-        return super().forward(out, target)
+        return super().forward(input, target) # logits already extracted by trainer
