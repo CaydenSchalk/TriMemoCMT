@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=temporal-trimemocmt
-#SBATCH --partition=gpuA100x4
+#SBATCH --partition=gpuH200x8
 #SBATCH --account=bgok-delta-gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
-#SBATCH --time=10:00:00
+#SBATCH --time=00:20:00
 #SBATCH --output=/projects/bgok/cschalk/temporal/logs/%x-%j.out
 #SBATCH --error=/projects/bgok/cschalk/temporal/logs/%x-%j.err
 #SBATCH --mail-user=chs3u@mtmail.mtsu.edu
