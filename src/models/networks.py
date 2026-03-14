@@ -327,7 +327,7 @@ class TriMemoCMT(nn.Module):
         # audio_embeddings = self.audio_encoder(audio_flat)
 
         text_embeddings, audio_embeddings, video_embeddings = \
-            self._encode_chunked(text_flat, audio_flat, video_flat, chunk_size=4)
+            self._encode_chunked(text_flat, audio_flat, video_flat, chunk_size=1)
 
         # Fusion
         (text_audio, text_video, audio_text,
