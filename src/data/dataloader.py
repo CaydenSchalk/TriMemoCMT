@@ -229,19 +229,56 @@ class BaseDataset(Dataset):
     def __getitem__(self, index):
         conv = self.data_list[index]
         utterances = conv["utterances"]
-
         speaker_map = {"M": 0, "F": 1}
+        dialog_id = conv.get("dialog_id", f"conv_{index}")
 
         videos, audios, texts, labels, speakers = [], [], [], [], []
-        for utt in utterances:
-            video_path = str(self.dataset_root / utt["video_relpath"])
-            audio_path = str(self.raw_dataset_root / utt["audio_relpath"])
+        cache_hits = 0
+        cache_misses = 0
 
-            videos.append(self.__pvideo__(video_path))
-            audios.append(self.__paudio__(audio_path))
-            texts.append(self.__ptext__(utt["text"]))
+        # Check how many need caching before starting
+        needs_caching = 0
+        for utt in utterances:
+            raw = f"{utt['audio_relpath']}|{utt['video_relpath']}|{self._config_hash}"
+            key = hashlib.sha256(raw.encode()).hexdigest()[:16]
+            if not (self._cache_dir / f"{key}.pt").exists():
+                needs_caching += 1
+
+        if needs_caching > 0:
+            print(f"[{dialog_id}] Building cache for {needs_caching}/{len(utterances)} utterances...")
+            utt_iter = tqdm(utterances, desc=f"Caching {dialog_id}", leave=False)
+        else:
+            utt_iter = utterances
+
+        for utt in utt_iter:
+            cache_key = hashlib.sha256(
+                f"{utt['audio_relpath']}|{utt['video_relpath']}|{self._config_hash}".encode()
+            ).hexdigest()[:16]
+            cache_file = self._cache_dir / f"{cache_key}.pt"
+
+            if cache_file.exists():
+                payload = torch.load(cache_file, weights_only=True)
+                cache_hits += 1
+            else:
+                video_path = str(self.dataset_root / utt["video_relpath"])
+                audio_path = str(self.raw_dataset_root / utt["audio_relpath"])
+                payload = {
+                    "video": self.__pvideo__(video_path),
+                    "audio": self.__paudio__(audio_path),
+                    "text": self.__ptext__(utt["text"]),
+                }
+                tmp = cache_file.with_suffix(".tmp")
+                torch.save(payload, tmp)
+                tmp.rename(cache_file)
+                cache_misses += 1
+
+            videos.append(payload["video"])
+            audios.append(payload["audio"])
+            texts.append(payload["text"])
             labels.append(self.__plabel__(utt["label"]))
             speakers.append(speaker_map[utt["speaker"]])
+
+        print(f"[{dialog_id}] {len(utterances)} utts | cache: {cache_hits} hits, {cache_misses} misses")
 
         return {
             "video": torch.stack(videos),
@@ -251,6 +288,32 @@ class BaseDataset(Dataset):
             "speaker_ids": torch.tensor(speakers, dtype=torch.long),
             "lengths": len(utterances),
         }
+
+    # def __getitem__(self, index):
+    #     conv = self.data_list[index]
+    #     utterances = conv["utterances"]
+    #
+    #     speaker_map = {"M": 0, "F": 1}
+    #
+    #     videos, audios, texts, labels, speakers = [], [], [], [], []
+    #     for utt in utterances:
+    #         video_path = str(self.dataset_root / utt["video_relpath"])
+    #         audio_path = str(self.raw_dataset_root / utt["audio_relpath"])
+    #
+    #         videos.append(self.__pvideo__(video_path))
+    #         audios.append(self.__paudio__(audio_path))
+    #         texts.append(self.__ptext__(utt["text"]))
+    #         labels.append(self.__plabel__(utt["label"]))
+    #         speakers.append(speaker_map[utt["speaker"]])
+    #
+    #     return {
+    #         "video": torch.stack(videos),
+    #         "audio": torch.stack(audios),
+    #         "text": torch.stack(texts),
+    #         "labels": torch.stack(labels),
+    #         "speaker_ids": torch.tensor(speakers, dtype=torch.long),
+    #         "lengths": len(utterances),
+    #     }
 
     # def __getitem__(
     #     self, index: int
