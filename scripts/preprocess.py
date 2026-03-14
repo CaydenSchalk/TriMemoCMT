@@ -436,13 +436,10 @@ def preprocess_MELD(args):
     logging.info(f"Saved to {output_root}")
     logging.info("Preprocessing finished successfully")
 
-
 def info_IEMOCAP(args):
-
-
     data_root = args.data_root
     iemocap2label = LABEL_MAP.copy()
-    iemocap2label.update({"exc": 1})  # excited to happy
+    iemocap2label.update({"exc": 1})
 
     label_names = {
         "ang": "Angry",
@@ -450,9 +447,14 @@ def info_IEMOCAP(args):
         "exc": "Excited (→ Happy)",
         "sad": "Sad",
         "neu": "Neutral",
+        "fru": "Frustration",
+        "xxx": "Other/Uncertain",
+        "dis": "Disgust",
+        "sur": "Surprise",
+        "fea": "Fear",
     }
 
-    per_session = {}   # sess_id, counter or raw emotion str
+    per_session = {}
     skipped = Counter()
 
     for sess_id in range(1, 6):
@@ -463,30 +465,38 @@ def info_IEMOCAP(args):
 
         counts = Counter()
         for l_path in glob.glob(os.path.join(sess_label_root, "*.txt")):
-            dialog_id = os.path.splitext(os.path.basename(l_path))[0]
             with open(l_path, "r") as f:
-                for line in f:
-                    if not line.startswith("["):
-                        continue
-                    data = line[1:].split()
-                    utt_id = data[3]
-                    emo = data[4]
+                lines = f.readlines()
 
-                    if emo not in iemocap2label:
-                        skipped["unknown_emotion"] += 1
-                        continue
+            for line in lines:
+                if not line.strip().startswith("["):
+                    continue
 
-                    wav_path = os.path.join(sess_audio_root, utt_id[:-5], f"{utt_id}.wav")
-                    if not os.path.exists(wav_path):
-                        skipped["missing_wav"] += 1
-                        continue
+                data = line.strip()[1:].split()
+                if len(data) < 5:
+                    continue
 
-                    video_path = os.path.join(sess_video_root, f"{utt_id[:-5]}.avi")
-                    if not os.path.exists(video_path):
-                        skipped["missing_video"] += 1
-                        continue
+                utt_id = data[3]
+                emo = data[4]
+                dialog_id = utt_id[:-5].rstrip("_")
 
-                    counts[emo] += 1
+                wav_path = os.path.join(sess_audio_root, dialog_id, f"{utt_id}.wav")
+                video_path = os.path.join(sess_video_root, f"{dialog_id}.avi")
+
+                if not os.path.exists(wav_path):
+                    skipped["missing_wav"] += 1
+                    continue
+
+                if not os.path.exists(video_path):
+                    skipped["missing_video"] += 1
+                    continue
+
+                # filter to 4-class set unless --info-all
+                if not args.info_all and emo not in iemocap2label:
+                    skipped["unknown_emotion"] += 1
+                    continue
+
+                counts[emo] += 1
 
         per_session[sess_id] = counts
 
@@ -496,13 +506,15 @@ def info_IEMOCAP(args):
         total_counts.update(counts)
 
     grand_total = sum(total_counts.values())
+    if grand_total == 0:
+        print("No samples found - check your data_root path.")
+        return
 
-    # per-session table
     all_emos = sorted(total_counts.keys(), key=lambda e: -total_counts[e])
-    col_w = 18
+    col_w = 20
     header = f"{'Emotion':{col_w}}" + "".join(f"  Sess{s}" for s in range(1, 6)) + "   Total     %"
     print(f"\n{'='*len(header)}")
-    print("IEMOCAP label distribution")
+    print("IEMOCAP label distribution" + (" (all emotions)" if args.info_all else " (4-class)"))
     print(f"{'='*len(header)}")
     print(header)
     print("-" * len(header))
@@ -522,22 +534,22 @@ def info_IEMOCAP(args):
     print(foot)
 
     # merged view
-    merged = Counter()
-    for emo, count in total_counts.items():
-        merged_key = "hap" if emo == "exc" else emo
-        merged[merged_key] += count
-    merged_total = sum(merged.values())
-    print(f"\nAfter merging exc to hap:")
-    for emo, count in sorted(merged.items(), key=lambda x: -x[1]):
-        pct = 100 * count / merged_total
-        bar = "█" * int(pct / 2)
-        print(f"  {label_names.get(emo, emo):10s}: {count:5d}  {pct:5.1f}%  {bar}")
+    if not args.info_all:
+        merged = Counter()
+        for emo, count in total_counts.items():
+            merged_key = "hap" if emo == "exc" else emo
+            merged[merged_key] += count
+        merged_total = sum(merged.values())
+        print(f"\nAfter merging exc → hap:")
+        for emo, count in sorted(merged.items(), key=lambda x: -x[1]):
+            pct = 100 * count / merged_total
+            bar = "█" * int(pct / 2)
+            print(f"  {label_names.get(emo, emo):22s}: {count:5d}  {pct:5.1f}%  {bar}")
 
     if skipped:
-        print(f"\nSkipped utterances:")
+        print(f"\nSkipped:")
         for reason, count in skipped.items():
             print(f"  {reason}: {count}")
-
 
 def main(args):
     if args.info:
@@ -591,6 +603,14 @@ def arg_parser():
         action="store_true",
         help="Print dataset statistics without running full preprocessing (IEMOCAP only)",
     )
+
+    parser.add_argument(
+        "--info-all",
+        action="store_true",
+        dest="info_all",
+        help="With --info, show all emotion categories instead of just the 4-class set",
+    )
+
     return parser.parse_args()
 
 
