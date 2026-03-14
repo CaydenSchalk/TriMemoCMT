@@ -279,6 +279,30 @@ class TriMemoCMT(nn.Module):
     #
     #     return out, cls_token_final_fusion_norm, text_audio, text_video, audio_text, audio_video, video_audio, video_text
 
+    def _encode_chunked(self, text_flat, audio_flat, video_flat, chunk_size=4):
+        N = text_flat.size(0)
+        text_embeds, audio_embeds, video_embeds = [], [], []
+
+        for i in range(0, N, chunk_size):
+            j = min(i + chunk_size, N)
+
+            with torch.no_grad():
+                t = self.text_encoder(text_flat[i:j]).last_hidden_state
+                a = self.audio_encoder(audio_flat[i:j])
+
+            v = self.video_encoder(video_flat[i:j])
+            cls = self.video_cls_token.expand(v.size(0), -1, -1)
+            v = torch.cat([cls, v], dim=1)
+            v = self.video_self_attn(v)
+
+            text_embeds.append(t)
+            audio_embeds.append(a)
+            video_embeds.append(v)
+
+        return (torch.cat(text_embeds, dim=0),
+                torch.cat(audio_embeds, dim=0),
+                torch.cat(video_embeds, dim=0))
+
     def forward(
             self,
             input_text,  # (B, T_conv, seq_len)
@@ -295,12 +319,15 @@ class TriMemoCMT(nn.Module):
         video_flat = input_video.view(B * T_conv, *input_video.shape[2:])
 
         # Per-utterance encoding
-        text_embeddings = self.text_encoder(text_flat).last_hidden_state
-        video_embeddings = self.video_encoder(video_flat)
-        cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)
-        video_embeddings = torch.cat([cls, video_embeddings], dim=1)
-        video_embeddings = self.video_self_attn(video_embeddings)
-        audio_embeddings = self.audio_encoder(audio_flat)
+        # text_embeddings = self.text_encoder(text_flat).last_hidden_state
+        # video_embeddings = self.video_encoder(video_flat)
+        # cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)
+        # video_embeddings = torch.cat([cls, video_embeddings], dim=1)
+        # video_embeddings = self.video_self_attn(video_embeddings)
+        # audio_embeddings = self.audio_encoder(audio_flat)
+
+        text_embeddings, audio_embeddings, video_embeddings = \
+            self._encode_chunked(text_flat, audio_flat, video_flat, chunk_size=4)
 
         # Fusion
         (text_audio, text_video, audio_text,
