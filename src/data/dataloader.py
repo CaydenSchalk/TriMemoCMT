@@ -257,7 +257,7 @@ class BaseDataset(Dataset):
             cache_file = self._cache_dir / f"{cache_key}.pt"
 
             if cache_file.exists():
-                payload = torch.load(cache_file, weights_only=True)
+                payload = torch.load(cache_file)
                 cache_hits += 1
             else:
                 video_path = str(self.dataset_root / utt["video_relpath"])
