@@ -4,7 +4,7 @@ import torch.nn as nn
 from configs.base import Config
 
 from .modules import build_audio_encoder, build_text_encoder, build_video_encoder
-
+from torch.utils.checkpoint import checkpoint
 
 class CrossAttentionBlock(nn.Module):
     def __init__(self, embed_dim, num_heads, dropout=0.1):
@@ -290,10 +290,9 @@ class TriMemoCMT(nn.Module):
                 t = self.text_encoder(text_flat[i:j]).last_hidden_state
                 a = self.audio_encoder(audio_flat[i:j])
 
-            v = self.video_encoder(video_flat[i:j])
-            cls = self.video_cls_token.expand(v.size(0), -1, -1)
-            v = torch.cat([cls, v], dim=1)
-            v = self.video_self_attn(v)
+            # Gradient checkpointing: recomputes forward during backward
+            # instead of storing all intermediate activations
+            v = checkpoint(self._encode_single_video, video_flat[i:j], use_reentrant=False)
 
             text_embeds.append(t)
             audio_embeds.append(a)
@@ -302,6 +301,13 @@ class TriMemoCMT(nn.Module):
         return (torch.cat(text_embeds, dim=0),
                 torch.cat(audio_embeds, dim=0),
                 torch.cat(video_embeds, dim=0))
+
+    def _encode_single_video(self, video_chunk):
+        v = self.video_encoder(video_chunk)
+        cls = self.video_cls_token.expand(v.size(0), -1, -1)
+        v = torch.cat([cls, v], dim=1)
+        v = self.video_self_attn(v)
+        return v
 
     def forward(
             self,
