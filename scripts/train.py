@@ -69,7 +69,7 @@ def main(cfg: Config):
     except AttributeError:
         raise NotImplementedError(f"Trainer {cfg.trainer} is not implemented")
 
-    train_ds, test_ds = build_train_test_dataset(cfg, precache=True)
+    train_ds, test_ds = build_train_test_dataset(cfg, precache=False)
     logging.info("Initializing trainer...")
     logging.info("Start training...")
 

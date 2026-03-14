@@ -53,6 +53,38 @@ class MultimodalFusion(nn.Module):
 
         return text_audio, text_video, audio_text, audio_video, video_audio, video_text
 
+class TemporalTransformer(nn.Module):
+    """Self-attention over conversation turns."""
+    def __init__(self, embed_dim, num_heads, num_layers=2, dropout=0.1):
+        super().__init__()
+        self.pos_encoding = nn.Parameter(torch.randn(1, 512, embed_dim) * 0.02)
+        self.speaker_embed = nn.Embedding(2, embed_dim)  # M=0, F=1
+        self.encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=embed_dim,
+                nhead=num_heads,
+                dropout=dropout,
+                batch_first=True,
+            ),
+            num_layers=num_layers,
+        )
+
+    def forward(self, x, speaker_ids=None, mask=None):
+        """
+        x: (B, T_conv, D)
+        speaker_ids: (B, T_conv) — 0 or 1
+        mask: (B, T_conv) — True for padded positions
+        """
+        T = x.size(1)
+        x = x + self.pos_encoding[:, :T, :]
+
+        if speaker_ids is not None:
+            x = x + self.speaker_embed(speaker_ids)
+
+        # TransformerEncoder expects src_key_padding_mask where True = ignore
+        x = self.encoder(x, src_key_padding_mask=mask)
+        return x
+
 class TriMemoCMT(nn.Module):
     def __init__(
         self,
@@ -131,108 +163,185 @@ class TriMemoCMT(nn.Module):
             num_layers=2
         )
 
+        temporal_input_dim = (6 * cfg.fusion_dim
+                              if cfg.fusion_head_output_type == "cls_concat"
+                              else cfg.fusion_dim)
+
+        self.temporal_transformer = TemporalTransformer(
+            embed_dim=temporal_input_dim,
+            num_heads=cfg.num_attention_head,
+            num_layers=cfg.temporal_num_layers,
+            dropout=cfg.dropout,
+        )
+
+        self.use_temporal = cfg.use_temporal
+
+    # def forward(
+    #     self,
+    #     input_text: torch.Tensor,
+    #     input_audio: torch.Tensor,
+    #     input_video: torch.Tensor,
+    #     output_attentions: bool = False,
+    # ):
+    #
+    #     text_embeddings = self.text_encoder(input_text).last_hidden_state
+    #
+    #     # add a CLS token at the beginning
+    #     video_embeddings = self.video_encoder(input_video)  # (B, num_patches, 768)
+    #
+    #     # cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)  # (B, 1, 768)
+    #     # video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, 1+num_patches, 768)
+    #
+    #     cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)
+    #     video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, N+1, 768)
+    #     video_embeddings = self.video_self_attn(video_embeddings)
+    #
+    #     if len(input_audio.size()) != 2:
+    #         batch_size, num_samples = input_audio.size(0), input_audio.size(1)
+    #         audio_embeddings = self.audio_encoder(
+    #             input_audio.view(-1, *input_audio.shape[2:])
+    #         ).last_hidden_state
+    #         audio_embeddings = audio_embeddings.mean(1)
+    #         audio_embeddings = audio_embeddings.view(
+    #             batch_size, num_samples, *audio_embeddings.shape[1:]
+    #         )
+    #     else:
+    #         audio_embeddings = self.audio_encoder(input_audio)
+    #
+    #     # print(f"text: {text_embeddings.shape}, audio: {audio_embeddings.shape}, video: {video_embeddings.shape}")
+    #
+    #     ## Fusion Module
+    #
+    #     (text_audio,
+    #      text_video,
+    #      audio_text,
+    #      audio_video,
+    #      video_audio,
+    #      video_text) = self.fusion_module(text_embeddings, audio_embeddings, video_embeddings)
+    #
+    #     # Concatenate the text and audio embeddings
+    #     fusion_norm = torch.cat((text_audio,
+    #                              text_video,
+    #                              audio_text,
+    #                              audio_video,
+    #                              video_audio,
+    #                              video_text), 1)
+    #
+    #     fusion_norm = self.dropout(fusion_norm)
+    #
+    #     cls_tokens = torch.stack([
+    #         text_audio[:, 0, :],
+    #         text_video[:, 0, :],
+    #         audio_text[:, 0, :],
+    #         audio_video[:, 0, :],
+    #         video_audio[:, 0, :],
+    #         video_text[:, 0, :],
+    #     ], dim=1)  # [B, 6, hidden]
+    #
+    #     B = text_audio.size(0)
+    #
+    #     num_cross = cls_tokens.size(1)
+    #     hidden_size = cls_tokens.size(2)
+    #
+    #     # Get classification output
+    #     if self.fusion_head_output_type == "cls_concat":
+    #         cls_token_final_fusion_norm = cls_tokens.reshape(B, num_cross * hidden_size)
+    #     elif self.fusion_head_output_type == "cls_mean":
+    #         cls_token_final_fusion_norm = cls_tokens.mean(dim=1)  # [B, hidden]
+    #     elif self.fusion_head_output_type == "cls":
+    #         cls_token_final_fusion_norm = fusion_norm[:, 0, :]
+    #     elif self.fusion_head_output_type == "mean":
+    #         cls_token_final_fusion_norm = fusion_norm.mean(dim=1)
+    #     elif self.fusion_head_output_type == "max":
+    #         cls_token_final_fusion_norm = fusion_norm.max(dim=1)[0]
+    #     elif self.fusion_head_output_type == "min":
+    #         cls_token_final_fusion_norm = fusion_norm.min(dim=1)[0]
+    #     else:
+    #         raise ValueError("Invalid fusion head output type")
+    #
+    #     # Classification head
+    #     x = cls_token_final_fusion_norm
+    #     x = self.dropout(x)
+    #
+    #     # print(x.shape)
+    #     # print(fusion_norm[:, 0, :].shape)
+    #     for i, _ in enumerate(self.linear_layer_output):
+    #         x = getattr(self, f"linear_{i}")(x)
+    #         x = nn.functional.leaky_relu(x)
+    #     x = self.dropout(x)
+    #     out = self.classifer(x)
+    #
+    #     # if output_attentions:
+    #     #     return [out, cls_token_final_fusion_norm], [
+    #     #         text_audio_attn_output_weights,
+    #     #         audio_text_attn_output_weights,
+    #     #     ]
+    #
+    #     return out, cls_token_final_fusion_norm, text_audio, text_video, audio_text, audio_video, video_audio, video_text
+
     def forward(
-        self,
-        input_text: torch.Tensor,
-        input_audio: torch.Tensor,
-        input_video: torch.Tensor,
-        output_attentions: bool = False,
+            self,
+            input_text,  # (B, T_conv, seq_len)
+            input_audio,  # (B, T_conv, audio_len)
+            input_video,  # (B, T_conv, num_frames, C, H, W)
+            speaker_ids=None,  # (B, T_conv)
+            padding_mask=None,  # (B, T_conv) — True where padded
     ):
+        B, T_conv = input_text.shape[:2]
 
-        text_embeddings = self.text_encoder(input_text).last_hidden_state
+        # Flatten conversation into batch for per-utterance encoding
+        text_flat = input_text.view(B * T_conv, *input_text.shape[2:])
+        audio_flat = input_audio.view(B * T_conv, *input_audio.shape[2:])
+        video_flat = input_video.view(B * T_conv, *input_video.shape[2:])
 
-        # add a CLS token at the beginning
-        video_embeddings = self.video_encoder(input_video)  # (B, num_patches, 768)
-
-        # cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)  # (B, 1, 768)
-        # video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, 1+num_patches, 768)
-
+        # Per-utterance encoding
+        text_embeddings = self.text_encoder(text_flat).last_hidden_state
+        video_embeddings = self.video_encoder(video_flat)
         cls = self.video_cls_token.expand(video_embeddings.size(0), -1, -1)
-        video_embeddings = torch.cat([cls, video_embeddings], dim=1)  # (B, N+1, 768)
+        video_embeddings = torch.cat([cls, video_embeddings], dim=1)
         video_embeddings = self.video_self_attn(video_embeddings)
+        audio_embeddings = self.audio_encoder(audio_flat)
 
-        if len(input_audio.size()) != 2:
-            batch_size, num_samples = input_audio.size(0), input_audio.size(1)
-            audio_embeddings = self.audio_encoder(
-                input_audio.view(-1, *input_audio.shape[2:])
-            ).last_hidden_state
-            audio_embeddings = audio_embeddings.mean(1)
-            audio_embeddings = audio_embeddings.view(
-                batch_size, num_samples, *audio_embeddings.shape[1:]
-            )
-        else:
-            audio_embeddings = self.audio_encoder(input_audio)
+        # Fusion
+        (text_audio, text_video, audio_text,
+         audio_video, video_audio, video_text) = self.fusion_module(
+            text_embeddings, audio_embeddings, video_embeddings
+        )
 
-        # print(f"text: {text_embeddings.shape}, audio: {audio_embeddings.shape}, video: {video_embeddings.shape}")
-
-        ## Fusion Module
-
-        (text_audio,
-         text_video,
-         audio_text,
-         audio_video,
-         video_audio,
-         video_text) = self.fusion_module(text_embeddings, audio_embeddings, video_embeddings)
-
-        # Concatenate the text and audio embeddings
-        fusion_norm = torch.cat((text_audio,
-                                 text_video,
-                                 audio_text,
-                                 audio_video,
-                                 video_audio,
-                                 video_text), 1)
-
-        fusion_norm = self.dropout(fusion_norm)
-
+        # Pool to per-utterance vector
         cls_tokens = torch.stack([
-            text_audio[:, 0, :],
-            text_video[:, 0, :],
-            audio_text[:, 0, :],
-            audio_video[:, 0, :],
-            video_audio[:, 0, :],
-            video_text[:, 0, :],
-        ], dim=1)  # [B, 6, hidden]
+            text_audio[:, 0, :], text_video[:, 0, :],
+            audio_text[:, 0, :], audio_video[:, 0, :],
+            video_audio[:, 0, :], video_text[:, 0, :],
+        ], dim=1)  # (B*T_conv, 6, D)
 
-        B = text_audio.size(0)
-
-        num_cross = cls_tokens.size(1)
-        hidden_size = cls_tokens.size(2)
-
-        # Get classification output
         if self.fusion_head_output_type == "cls_concat":
-            cls_token_final_fusion_norm = cls_tokens.reshape(B, num_cross * hidden_size)
+            utt_embeds = cls_tokens.reshape(B * T_conv, -1)  # (B*T_conv, 6*D)
         elif self.fusion_head_output_type == "cls_mean":
-            cls_token_final_fusion_norm = cls_tokens.mean(dim=1)  # [B, hidden]
-        elif self.fusion_head_output_type == "cls":
-            cls_token_final_fusion_norm = fusion_norm[:, 0, :]
-        elif self.fusion_head_output_type == "mean":
-            cls_token_final_fusion_norm = fusion_norm.mean(dim=1)
-        elif self.fusion_head_output_type == "max":
-            cls_token_final_fusion_norm = fusion_norm.max(dim=1)[0]
-        elif self.fusion_head_output_type == "min":
-            cls_token_final_fusion_norm = fusion_norm.min(dim=1)[0]
-        else:
-            raise ValueError("Invalid fusion head output type")
+            utt_embeds = cls_tokens.mean(dim=1)  # (B*T_conv, D)
 
-        # Classification head
-        x = cls_token_final_fusion_norm
-        x = self.dropout(x)
+        # Reshape back to conversations
+        utt_embeds = utt_embeds.view(B, T_conv, -1)  # (B, T_conv, D)
 
-        # print(x.shape)
-        # print(fusion_norm[:, 0, :].shape)
+        temporal_out = utt_embeds
+
+        # Temporal transformer
+        if self.use_temporal:
+            temporal_out = self.temporal_transformer(
+                utt_embeds,
+                speaker_ids=speaker_ids,
+                mask=padding_mask,
+            )  # (B, T_conv, D)
+
+        # Per-utterance classification
+        x = self.dropout(temporal_out)
         for i, _ in enumerate(self.linear_layer_output):
             x = getattr(self, f"linear_{i}")(x)
             x = nn.functional.leaky_relu(x)
         x = self.dropout(x)
-        out = self.classifer(x)
+        out = self.classifer(x)  # (B, T_conv, num_classes)
 
-        # if output_attentions:
-        #     return [out, cls_token_final_fusion_norm], [
-        #         text_audio_attn_output_weights,
-        #         audio_text_attn_output_weights,
-        #     ]
-
-        return out, cls_token_final_fusion_norm, text_audio, text_video, audio_text, audio_video, video_audio, video_text
+        return out, temporal_out
 
     def encode_audio(self, audio: torch.Tensor):
         return self.audio_encoder(audio)

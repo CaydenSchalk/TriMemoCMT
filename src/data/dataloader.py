@@ -58,19 +58,19 @@ class BaseDataset(Dataset):
             "OpenGVLab/VideoMAEv2-Base"
         )
 
-        if cfg.batch_size == 1:
-            self.audio_max_length = None
-            self.text_max_length = None
-            self.video_max_length = None
+        # if cfg.batch_size == 1:
+        #     self.audio_max_length = None
+        #     self.text_max_length = None
+        #     self.video_max_length = None
 
         self.audio_encoder_type = cfg.audio_encoder_type
 
-        # ── Disk cache setup ──────────────────────────────────────────
+        # Disk cache setup
         split_name = Path(data_mode).stem  # "train", "val", "test"
         self._cache_dir = self.dataset_root / "cache" / split_name
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Config fingerprint — cache auto-invalidates when these change
+        # Config fingerprint - cache auto-invalidates when these change
         config_str = (
             f"audio_max={self.audio_max_length}|"
             f"text_max={self.text_max_length}|"
@@ -81,7 +81,7 @@ class BaseDataset(Dataset):
         )
         self._config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
 
-        # ── Encoder embedding cache (stage-2, unchanged) ──────────────
+        # Encoder embedding cache
         self.encode_data = False
         self.list_encode_audio_data = []
         self.list_encode_text_data = []
@@ -90,7 +90,7 @@ class BaseDataset(Dataset):
             self._encode_data(encoder_model)
             self.encode_data = True
 
-    # ── Cache helpers ─────────────────────────────────────────────────
+    # Cache helpers
 
     def _sample_cache_key(self, index: int) -> str:
         """Deterministic cache key for a given sample index."""
@@ -154,7 +154,7 @@ class BaseDataset(Dataset):
 
         return payload
 
-    # ── Sample resolution ─────────────────────────────────────────────
+    # Sample resolution
 
     def _resolve_sample(self, sample):
         if isinstance(sample, dict):
@@ -186,7 +186,7 @@ class BaseDataset(Dataset):
 
         raise TypeError(f"Unsupported sample type: {type(sample)}")
 
-    # ── Encoder embedding pre-computation (stage-2) ───────────────────
+    # Encoder embedding pre-computation
 
     def _encode_data(self, encoder):
         logging.info("Encoding data for training...")
@@ -226,43 +226,67 @@ class BaseDataset(Dataset):
             )
             self.list_encode_text_data.append(text_embedding)
 
-    # ── __getitem__ ───────────────────────────────────────────────────
+    def __getitem__(self, index):
+        conv = self.data_list[index]
+        utterances = conv["utterances"]
 
-    def __getitem__(
-        self, index: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        speaker_map = {"M": 0, "F": 1}
 
-        # Fast path: pre-computed encoder embeddings (stage-2)
-        if self.encode_data:
-            _, _, _, label = self._resolve_sample(self.data_list[index])
-            return (
-                self.list_encode_video_data[index],
-                self.list_encode_text_data[index],
-                self.list_encode_audio_data[index],
-                self.__plabel__(label),
-            )
+        videos, audios, texts, labels, speakers = [], [], [], [], []
+        for utt in utterances:
+            video_path = str(self.dataset_root / utt["video_relpath"])
+            audio_path = str(self.raw_dataset_root / utt["audio_relpath"])
 
-        # Normal path: disk-cached preprocessed tensors
-        cache_file = self._cache_path(index)
-        if cache_file.exists():
-            payload = torch.load(cache_file)
-            return (
-                payload["video"],
-                payload["text"],
-                payload["audio"],
-                payload["label"],
-            )
+            videos.append(self.__pvideo__(video_path))
+            audios.append(self.__paudio__(audio_path))
+            texts.append(self.__ptext__(utt["text"]))
+            labels.append(self.__plabel__(utt["label"]))
+            speakers.append(speaker_map[utt["speaker"]])
 
-        # Cache miss — preprocess, persist, return
-        payload = self._preprocess_and_cache(index)
-        return (
-            payload["video"],
-            payload["text"],
-            payload["audio"],
-            payload["label"],
-        )
+        return {
+            "video": torch.stack(videos),
+            "audio": torch.stack(audios),
+            "text": torch.stack(texts),
+            "labels": torch.stack(labels),
+            "speaker_ids": torch.tensor(speakers, dtype=torch.long),
+            "lengths": len(utterances),
+        }
 
-    # ── Preprocessing helpers (unchanged) ─────────────────────────────
+    # def __getitem__(
+    #     self, index: int
+    # ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    #
+    #     # Fast path: pre-computed encoder embeddings (stage-2)
+    #     if self.encode_data:
+    #         _, _, _, label = self._resolve_sample(self.data_list[index])
+    #         return (
+    #             self.list_encode_video_data[index],
+    #             self.list_encode_text_data[index],
+    #             self.list_encode_audio_data[index],
+    #             self.__plabel__(label),
+    #         )
+    #
+    #     # Normal path: disk-cached preprocessed tensors
+    #     cache_file = self._cache_path(index)
+    #     if cache_file.exists():
+    #         payload = torch.load(cache_file)
+    #         return (
+    #             payload["video"],
+    #             payload["text"],
+    #             payload["audio"],
+    #             payload["label"],
+    #         )
+    #
+    #     # Cache miss — preprocess, persist, return
+    #     payload = self._preprocess_and_cache(index)
+    #     return (
+    #         payload["video"],
+    #         payload["text"],
+    #         payload["audio"],
+    #         payload["label"],
+    #     )
+
+    # Preprocessing helpers
 
     def __pvideo__(self, file_path: str) -> torch.Tensor:
         cap = cv2.VideoCapture(file_path)
@@ -342,6 +366,38 @@ class BaseDataset(Dataset):
     def __len__(self):
         return len(self.data_list)
 
+def conversation_collate(batch):
+    max_conv_len = max(b["lengths"] for b in batch)
+
+    padded = {"video": [], "audio": [], "text": [], "labels": [], "mask": [], "speaker_ids": []}
+
+    for b in batch:
+        T = b["lengths"]
+        pad_len = max_conv_len - T
+
+        mask = torch.cat([torch.ones(T), torch.zeros(pad_len)])
+        padded["mask"].append(mask)
+
+        for key in ["video", "audio", "text"]:
+            tensor = b[key]
+            if pad_len > 0:
+                pad_shape = (pad_len, *tensor.shape[1:])
+                tensor = torch.cat([tensor, torch.zeros(pad_shape)], dim=0)
+            padded[key].append(tensor)
+
+        # Labels: pad with -100
+        lab = b["labels"]
+        if pad_len > 0:
+            lab = torch.cat([lab, torch.full((pad_len,), -100, dtype=lab.dtype)])
+        padded["labels"].append(lab)
+
+        # Speaker IDs: pad with 0 (value doesn't matter, masked out)
+        spk = b["speaker_ids"]
+        if pad_len > 0:
+            spk = torch.cat([spk, torch.zeros(pad_len, dtype=spk.dtype)])
+        padded["speaker_ids"].append(spk)
+
+    return {k: torch.stack(v) for k, v in padded.items()}
 
 def build_train_test_dataset(
     cfg: Config,
@@ -389,6 +445,7 @@ def build_train_test_dataset(
         num_workers=cfg.num_workers,
         pin_memory=True,
         persistent_workers=cfg.num_workers > 0,
+        collate_fn=conversation_collate,
     )
     test_dataloader = DataLoader(
         test_data,
@@ -397,5 +454,6 @@ def build_train_test_dataset(
         num_workers=cfg.num_workers,
         pin_memory=True,
         persistent_workers=cfg.num_workers > 0,
+        collate_fn=conversation_collate,
     )
     return train_dataloader, test_dataloader

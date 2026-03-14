@@ -20,63 +20,81 @@ class Trainer(TorchTrainer):
         super().__init__(**kwargs)
         self.cfg = cfg
         self.network = network
-        self.criterion = criterion
+        # ignore_index=-100 so padded utterances don't contribute to loss
+        self.criterion = criterion or torch.nn.CrossEntropyLoss(ignore_index=-100)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.network.to(self.device)
 
-    def train_step(self, batch: Dict[str, Tensor]) -> Dict[str, Tensor]:
+    def _unpack_batch(self, batch):
+        """Move batch dict to device and return components."""
+        text = batch["text"].to(self.device)           # (B, T_conv, seq_len)
+        audio = batch["audio"].to(self.device)          # (B, T_conv, audio_len)
+        video = batch["video"].to(self.device)          # (B, T_conv, F, C, H, W)
+        labels = batch["labels"].to(self.device)        # (B, T_conv)
+        mask = batch["mask"].to(self.device)            # (B, T_conv) — 1=real, 0=pad
+        speaker_ids = batch.get("speaker_ids")
+        if speaker_ids is not None:
+            speaker_ids = speaker_ids.to(self.device)   # (B, T_conv)
+
+        # TransformerEncoder expects True=ignore, but our mask is 1=real
+        padding_mask = (mask == 0)  # True where padded
+
+        return text, audio, video, labels, speaker_ids, padding_mask, mask
+
+    def _compute_loss_and_acc(self, logits, labels, mask):
+        """
+        logits: (B, T_conv, num_classes)
+        labels: (B, T_conv) — padded positions are -100
+        mask:   (B, T_conv) — 1=real, 0=pad
+        """
+        B, T_conv, C = logits.shape
+        # Flatten for cross-entropy
+        logits_flat = logits.view(B * T_conv, C)
+        labels_flat = labels.view(B * T_conv)
+
+        loss = self.criterion(logits_flat, labels_flat)
+
+        # Accuracy over real utterances only
+        preds = logits_flat.argmax(dim=1)
+        real_mask = (labels_flat != -100)
+        correct = ((preds == labels_flat) & real_mask).sum()
+        total = real_mask.sum()
+        accuracy = correct.float() / total.float() if total > 0 else torch.tensor(0.0)
+
+        return loss, accuracy
+
+    def train_step(self, batch):
         self.network.train()
         self.optimizer.zero_grad()
 
-        # Prepare batch
-        input_video, input_text, input_audio, label = batch
+        text, audio, video, labels, speaker_ids, padding_mask, mask = self._unpack_batch(batch)
 
-        # Move inputs to cpu or gpu
-        input_audio = input_audio.to(self.device)
-        input_video = input_video.to(self.device)
-        label = label.to(self.device)
-        input_text = input_text.to(self.device)
+        output, _ = self.network(text, audio, video,
+                                  speaker_ids=speaker_ids,
+                                  padding_mask=padding_mask)
 
-        # Forward pass
-        output = self.network(input_text, input_audio, input_video)
-        loss = self.criterion(output, label)
+        loss, accuracy = self._compute_loss_and_acc(output, labels, mask)
 
-        # Backward pass
         loss.backward()
-
-        # just to see if the weights are getting updated in the video branch
-        # for name, p in self.network.video_encoder.named_parameters():
-        #     if name == "model.model.blocks.9.attn.qkv.weight":
-        #         print(name, None if p.grad is None else p.grad.abs().mean().item())
-        #         break
-
         self.optimizer.step()
 
-        # Calculate accuracy
-        _, preds = torch.max(output[0], 1)
-        accuracy = torch.mean((preds == label).float())
         return {
             "loss": loss.detach().cpu().item(),
             "acc": accuracy.detach().cpu().item(),
         }
 
-    def test_step(self, batch: Dict[str, Tensor]) -> Dict[str, Tensor]:
+    def test_step(self, batch):
         self.network.eval()
-        # Prepare batch
-        input_video, input_text, input_audio, label = batch
 
-        # Move inputs to cpu or gpu
-        input_audio = input_audio.to(self.device)
-        label = label.to(self.device)
-        input_text = input_text.to(self.device)
-        input_video = input_video.to(self.device)
+        text, audio, video, labels, speaker_ids, padding_mask, mask = self._unpack_batch(batch)
+
         with torch.no_grad():
-            # Forward pass
-            output = self.network(input_text, input_audio, input_video)
-            loss = self.criterion(output, label)
-            # Calculate accuracy
-            _, preds = torch.max(output[0], 1)
-            accuracy = torch.mean((preds == label).float())
+            output, _ = self.network(text, audio, video,
+                                      speaker_ids=speaker_ids,
+                                      padding_mask=padding_mask)
+
+            loss, accuracy = self._compute_loss_and_acc(output, labels, mask)
+
         return {
             "loss": loss.detach().cpu().item(),
             "acc": accuracy.detach().cpu().item(),

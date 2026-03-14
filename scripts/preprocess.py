@@ -11,6 +11,7 @@ import soundfile as sf
 import tqdm
 import numpy as np
 import torch
+from collections import defaultdict
 
 # having issues importing on the HPC
 try:
@@ -77,9 +78,7 @@ def preprocess_IEMOCAP(args):
     ignore_length = args.ignore_length
 
     session_id = list(range(1, 6))
-
-    samples = []
-    labels = []
+    conversations = defaultdict(list)
     iemocap2label = LABEL_MAP.copy()
     iemocap2label.update({"exc": 1})
     output_root = os.path.join(args.output_root, args.dataset)
@@ -197,31 +196,44 @@ def preprocess_IEMOCAP(args):
                 video_rel = os.path.relpath(video_path, output_root)
                 audio_rel = os.path.relpath(wav_path, args.data_root)
 
-                samples.append((video_rel, audio_rel, text, emo))
-                labels.append(emo)
+                # samples.append((video_rel, audio_rel, text, emo))
+                conversations[dialog_id].append({
+                    "video_relpath": video_rel,
+                    "audio_relpath": audio_rel,
+                    "text": text,
+                    "label": emo,
+                    "start_time": start_time,
+                    "speaker": utt_id.split("_")[-1][0],  # 'M' or 'F'
+                })
 
-    temp = list(zip(samples, labels))
-    random.Random(args.seed).shuffle(temp)
-    samples, labels = zip(*temp)
+    conv_list = []
+    for dialog_id, utts in conversations.items():
+        utts.sort(key=lambda u: u["start_time"])
+        conv_list.append({
+            "dialog_id": dialog_id,
+            "utterances": utts,
+        })
 
-    train, test_samples, train_labels, _ = train_test_split(
-        samples, labels, test_size=0.1, random_state=args.seed
+    random.Random(args.seed).shuffle(conv_list)
+
+    train, test_convs = train_test_split(
+        conv_list, test_size=0.1, random_state=args.seed
     )
-    train_samples, val_samples, _, _ = train_test_split(
-        train, train_labels, test_size=0.1, random_state=args.seed
+    train_convs, val_convs = train_test_split(
+        train, test_size=0.1, random_state=args.seed
     )
 
     os.makedirs(output_root, exist_ok=True)
-    with open(os.path.join(output_root, "train.pkl"), "wb") as f:
-        pickle.dump(train_samples, f)
-    with open(os.path.join(output_root, "val.pkl"), "wb") as f:
-        pickle.dump(val_samples, f)
-    with open(os.path.join(output_root, "test.pkl"), "wb") as f:
-        pickle.dump(test_samples, f)
+    save_pickle(train_convs, os.path.join(output_root, "train.pkl"))
+    save_pickle(val_convs, os.path.join(output_root, "val.pkl"))
+    save_pickle(test_convs, os.path.join(output_root, "test.pkl"))
 
-    logging.info(f"Train samples: {len(train_samples)}")
-    logging.info(f"Val samples: {len(val_samples)}")
-    logging.info(f"Test samples: {len(test_samples)}")
+    logging.info(f"Train conversations: {len(train_convs)} "
+                 f"({sum(len(c['utterances']) for c in train_convs)} utterances)")
+    logging.info(f"Val conversations: {len(val_convs)} "
+                 f"({sum(len(c['utterances']) for c in val_convs)} utterances)")
+    logging.info(f"Test conversations: {len(test_convs)} "
+                 f"({sum(len(c['utterances']) for c in test_convs)} utterances)")
     logging.info(f"Saved to {output_root}")
     logging.info("Preprocessing finished successfully")
 

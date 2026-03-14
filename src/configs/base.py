@@ -168,6 +168,8 @@ class Config(BaseConfig):
 
         self.fusion_dim: int = 768
         self.fusion_head_output_type: str = "cls"  # [cls, mean, max]
+        self.temporal_num_layers = 2
+        self.use_temporal = True
 
         # Search for linear layer output dimension
         self.linear_layer_output: List = [128]
