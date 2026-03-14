@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=temporal-trimemocmt
-#SBATCH --partition=gpuH200x8
+#SBATCH --partition=gpuA100x4
 #SBATCH --account=bgok-delta-gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
