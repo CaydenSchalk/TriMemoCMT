@@ -11,6 +11,7 @@ import soundfile as sf
 import tqdm
 import numpy as np
 import torch
+from collections import Counter
 
 # having issues importing on the HPC
 try:
@@ -436,7 +437,120 @@ def preprocess_MELD(args):
     logging.info("Preprocessing finished successfully")
 
 
+def info_IEMOCAP(args):
+
+
+    data_root = args.data_root
+    iemocap2label = LABEL_MAP.copy()
+    iemocap2label.update({"exc": 1})  # excited to happy
+
+    label_names = {
+        "ang": "Angry",
+        "hap": "Happy",
+        "exc": "Excited (→ Happy)",
+        "sad": "Sad",
+        "neu": "Neutral",
+    }
+
+    per_session = {}   # sess_id, counter or raw emotion str
+    skipped = Counter()
+
+    for sess_id in range(1, 6):
+        sess_path = os.path.join(data_root, f"Session{sess_id}")
+        sess_audio_root = os.path.join(sess_path, "sentences", "wav")
+        sess_label_root = os.path.join(sess_path, "dialog", "EmoEvaluation")
+        sess_video_root = os.path.join(sess_path, "dialog", "avi", "DivX")
+
+        counts = Counter()
+        for l_path in glob.glob(os.path.join(sess_label_root, "*.txt")):
+            dialog_id = os.path.splitext(os.path.basename(l_path))[0]
+            with open(l_path, "r") as f:
+                for line in f:
+                    if not line.startswith("["):
+                        continue
+                    data = line[1:].split()
+                    utt_id = data[3]
+                    emo = data[4]
+
+                    if emo not in iemocap2label:
+                        skipped["unknown_emotion"] += 1
+                        continue
+
+                    wav_path = os.path.join(sess_audio_root, utt_id[:-5], f"{utt_id}.wav")
+                    if not os.path.exists(wav_path):
+                        skipped["missing_wav"] += 1
+                        continue
+
+                    video_path = os.path.join(sess_video_root, f"{utt_id[:-5]}.avi")
+                    if not os.path.exists(video_path):
+                        skipped["missing_video"] += 1
+                        continue
+
+                    counts[emo] += 1
+
+        per_session[sess_id] = counts
+
+    # aggregate
+    total_counts = Counter()
+    for counts in per_session.values():
+        total_counts.update(counts)
+
+    grand_total = sum(total_counts.values())
+
+    # per-session table
+    all_emos = sorted(total_counts.keys(), key=lambda e: -total_counts[e])
+    col_w = 18
+    header = f"{'Emotion':{col_w}}" + "".join(f"  Sess{s}" for s in range(1, 6)) + "   Total     %"
+    print(f"\n{'='*len(header)}")
+    print("IEMOCAP label distribution")
+    print(f"{'='*len(header)}")
+    print(header)
+    print("-" * len(header))
+    for emo in all_emos:
+        name = label_names.get(emo, emo)
+        row = f"{name:{col_w}}"
+        for s in range(1, 6):
+            row += f"  {per_session[s].get(emo, 0):5d}"
+        pct = 100 * total_counts[emo] / grand_total
+        row += f"  {total_counts[emo]:6d}  {pct:5.1f}%"
+        print(row)
+    print("-" * len(header))
+    foot = f"{'TOTAL':{col_w}}"
+    for s in range(1, 6):
+        foot += f"  {sum(per_session[s].values()):5d}"
+    foot += f"  {grand_total:6d}  100.0%"
+    print(foot)
+
+    # merged view
+    merged = Counter()
+    for emo, count in total_counts.items():
+        merged_key = "hap" if emo == "exc" else emo
+        merged[merged_key] += count
+    merged_total = sum(merged.values())
+    print(f"\nAfter merging exc to hap:")
+    for emo, count in sorted(merged.items(), key=lambda x: -x[1]):
+        pct = 100 * count / merged_total
+        bar = "█" * int(pct / 2)
+        print(f"  {label_names.get(emo, emo):10s}: {count:5d}  {pct:5.1f}%  {bar}")
+
+    if skipped:
+        print(f"\nSkipped utterances:")
+        for reason, count in skipped.items():
+            print(f"  {reason}: {count}")
+
+
 def main(args):
+    if args.info:
+        info_fn = {
+            "IEMOCAP": info_IEMOCAP,
+        }
+        fn = info_fn.get(args.dataset)
+        if fn is None:
+            logging.error(f"--info is not supported for dataset: {args.dataset}")
+        else:
+            fn(args)
+        return
+
     preprocess_fn = {
         "IEMOCAP": preprocess_IEMOCAP,
         "ESD": preprocess_ESD,
@@ -471,6 +585,11 @@ def arg_parser():
         type=int,
         default=0,
         help="Ignore samples with length < ignore_length",
+    )
+    parser.add_argument(
+        "--info",
+        action="store_true",
+        help="Print dataset statistics without running full preprocessing (IEMOCAP only)",
     )
     return parser.parse_args()
 
