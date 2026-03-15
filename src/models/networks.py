@@ -76,12 +76,13 @@ class TriMemoCMT(nn.Module):
         self.video_encoder.to(device)
         for param in self.video_encoder.parameters():
             param.requires_grad = False
+
         if cfg.video_unfreeze:
             for block in self.video_encoder.model.model.blocks[-cfg.video_unfreeze_amount:]:
                 for p in block.parameters():
                     p.requires_grad = True
 
-        # Video CLS token + self-attention (same as 81% model)
+        # Video CLS token + self-attention
         self.video_cls_token = nn.Parameter(torch.randn(1, 1, cfg.video_encoder_dim))
         self.video_self_attn = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
@@ -107,17 +108,17 @@ class TriMemoCMT(nn.Module):
         self.fusion_head_output_type = cfg.fusion_head_output_type
         self.linear_layer_output = cfg.linear_layer_output
 
-        # Fusion output dim — matches 81% model exactly
+        # Fusion output dim
         fusion_out_dim = (6 * cfg.fusion_dim
                           if cfg.fusion_head_output_type == "cls_concat"
                           else cfg.fusion_dim)
 
-        # --- SpeakerStateRNN GRU cells ---
+        # GRU cells
         # global GRU: tracks overall conversation state
         self.global_gru = nn.GRUCell(fusion_out_dim, cfg.fusion_dim)
         # speaker GRU: tracks each speaker's emotional trajectory
         self.speaker_gru = nn.GRUCell(fusion_out_dim + cfg.fusion_dim, cfg.fusion_dim)
-        # emotion GRU: combines utterance + speaker context → feeds classifier
+        # emotion GRU: combines utterance + speaker context then feeds classifier
         self.emotion_gru = nn.GRUCell(fusion_out_dim + cfg.fusion_dim, cfg.fusion_dim)
 
         self.use_temporal = cfg.use_temporal
@@ -151,7 +152,7 @@ class TriMemoCMT(nn.Module):
     ):
         B = utt_text.size(0)
 
-        # --- Encode (same no_grad / grad_checkpoint pattern as 81% model) ---
+        # Encode
         with torch.no_grad():
             text_emb  = self.text_encoder(utt_text).last_hidden_state  # (B, seq_len, 768)
             audio_emb = self.audio_encoder(utt_audio)                  # (B, audio_frames, 768)
