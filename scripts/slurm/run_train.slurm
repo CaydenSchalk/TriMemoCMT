@@ -40,4 +40,4 @@ python train.py \
   --config ../src/configs/mae_base.py \
   --raw_root /projects/bgok/cschalk/Quals/data/raw \
   --processed_root /projects/bgok/cschalk/Quals/data/processed_batched \
-  --checkpoint_root /projects/bgok/cschalk/Quals/checkpoints
+  --checkpoint_root /projects/bgok/cschalk/temporal/checkpoints
